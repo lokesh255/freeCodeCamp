@@ -28,36 +28,47 @@ def lambda_handler(event, context):
     cloudtrail_client = boto3.client('cloudtrail')
     iam_client = boto3.client('iam')
 
-    # Get the CloudTrail logs
-    response = cloudtrail_client.lookup_events()
+    # Get the CloudTrail event history logs
+    response = cloudtrail_client.list_events(
+        LookupAttributes=[
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateCluster'},
+            {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::ECS::Cluster'}
+        ]
+    )
 
     # Extract the relevant information
     logs = response['Events']
-    service_logs = []
+    ecs_logs = []
 
     for log in logs:
         event_name = log['EventName']
-        if event_name == 'CreateService':
-            service_name = log['ServiceName']
-            role_arn = log['IAMRole']
-            try:
-                role_name = iam_client.get_role(RoleArn=role_arn)['Role']['RoleName']
-            except ClientError as e:
-                print(f"Failed to retrieve IAM role: {e.response['Error']['Message']}")
-                role_name = 'Unknown'
-            service_logs.append({'ServiceName': service_name, 'RoleName': role_name})
+        event_time = log['EventTime']
+        resources = log['Resources']
+        
+        for resource in resources:
+            resource_type = resource['ResourceType']
+            if resource_type == 'AWS::ECS::Cluster':
+                resource_name = resource['ResourceName']
+                role_arn = resource['IAMRole']
+                try:
+                    role_name = iam_client.get_role(RoleArn=role_arn)['Role']['RoleName']
+                except ClientError as e:
+                    print(f"Failed to retrieve IAM role: {e.response['Error']['Message']}")
+                    role_name = 'Unknown'
+                ecs_logs.append({'ResourceName': resource_name, 'RoleName': role_name, 'EventName': event_name, 'EventTime': event_time})
 
     # Prepare the email body
-    email_body = "CloudTrail logs for service creation and associated IAM roles:\n\n"
-    for log in service_logs:
-        email_body += f"Service Name: {log['ServiceName']}, Role Name: {log['RoleName']}\n"
+    email_body = "CloudTrail event history logs for ECS:\n\n"
+    for log in ecs_logs:
+        email_body += f"Resource Name: {log['ResourceName']}, Role Name: {log['RoleName']}, Event Name: {log['EventName']}, Event Time: {log['EventTime']}\n"
 
     # Send the email
     sender = 'your-email@example.com'
     recipient = 'recipient-email@example.com'
-    subject = 'CloudTrail Service Creation Log'
+    subject = 'CloudTrail ECS Event History Log'
     
     send_email(sender, recipient, subject, email_body)
 
-    # Return the service logs
-    return service_logs
+    # Return the ECS logs
+    return ecs_logs
+
