@@ -1,0 +1,65 @@
+import boto3
+from botocore.exceptions import ClientError
+
+def send_email(sender, recipient, subject, body):
+    # Create a new SES client
+    ses_client = boto3.client('ses')
+
+    # Send email
+    try:
+        response = ses_client.send_email(
+            Source=sender,
+            Destination={'ToAddresses': [recipient]},
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Text': {'Data': body}}
+            }
+        )
+    except ClientError as e:
+        print(f"Email sending failed: {e.response['Error']['Message']}")
+        return False
+    else:
+        print(f"Email sent! Message ID: {response['MessageId']}")
+        return True
+
+
+def lambda_handler(event, context):
+    # Initialize the AWS clients
+    cloudtrail_client = boto3.client('cloudtrail')
+    iam_client = boto3.client('iam')
+
+    # Get the CloudTrail logs
+    response = cloudtrail_client.lookup_events()
+
+    # Extract the relevant information
+    logs = response['Events']
+    resource_logs = []
+
+    for log in logs:
+        event_name = log['EventName']
+        if event_name == 'CreateResource':
+            resources = log['Resources']
+            for resource in resources:
+                resource_name = resource['ResourceName']
+                role_arn = resource['IAMRole']
+                try:
+                    role_name = iam_client.get_role(RoleArn=role_arn)['Role']['RoleName']
+                except ClientError as e:
+                    print(f"Failed to retrieve IAM role: {e.response['Error']['Message']}")
+                    role_name = 'Unknown'
+                resource_logs.append({'ResourceName': resource_name, 'RoleName': role_name})
+
+    # Prepare the email body
+    email_body = "Resource creation and associated IAM roles:\n\n"
+    for log in resource_logs:
+        email_body += f"Resource Name: {log['ResourceName']}, Role Name: {log['RoleName']}\n"
+
+    # Send the email
+    sender = 'your-email@example.com'
+    recipient = 'recipient-email@example.com'
+    subject = 'CloudTrail Resource Creation Report'
+    
+    send_email(sender, recipient, subject, email_body)
+
+    # Return the resource logs
+    return resource_logs
