@@ -33,33 +33,31 @@ def lambda_handler(event, context):
 
     # Extract the relevant information
     logs = response['Events']
-    resource_logs = []
+    service_logs = []
 
     for log in logs:
         event_name = log['EventName']
-        if event_name == 'CreateResource':
-            resources = log['Resources']
-            for resource in resources:
-                resource_name = resource['ResourceName']
-                role_arn = resource['IAMRole']
-                try:
-                    role_name = iam_client.get_role(RoleArn=role_arn)['Role']['RoleName']
-                except ClientError as e:
-                    print(f"Failed to retrieve IAM role: {e.response['Error']['Message']}")
-                    role_name = 'Unknown'
-                resource_logs.append({'ResourceName': resource_name, 'RoleName': role_name})
+        if event_name == 'CreateService':
+            service_name = log['ServiceName']
+            role_arn = log['IAMRole']
+            try:
+                role_name = iam_client.get_role(RoleArn=role_arn)['Role']['RoleName']
+            except ClientError as e:
+                print(f"Failed to retrieve IAM role: {e.response['Error']['Message']}")
+                role_name = 'Unknown'
+            service_logs.append({'ServiceName': service_name, 'RoleName': role_name})
 
     # Prepare the email body
-    email_body = "Resource creation and associated IAM roles:\n\n"
-    for log in resource_logs:
-        email_body += f"Resource Name: {log['ResourceName']}, Role Name: {log['RoleName']}\n"
+    email_body = "CloudTrail logs for service creation and associated IAM roles:\n\n"
+    for log in service_logs:
+        email_body += f"Service Name: {log['ServiceName']}, Role Name: {log['RoleName']}\n"
 
     # Send the email
     sender = 'your-email@example.com'
     recipient = 'recipient-email@example.com'
-    subject = 'CloudTrail Resource Creation Report'
+    subject = 'CloudTrail Service Creation Log'
     
     send_email(sender, recipient, subject, email_body)
 
-    # Return the resource logs
-    return resource_logs
+    # Return the service logs
+    return service_logs
