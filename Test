@@ -1,74 +1,79 @@
 import boto3
+import json
+import os
 from botocore.exceptions import ClientError
 
-def send_email(sender, recipient, subject, body):
-    # Create a new SES client
-    ses_client = boto3.client('ses')
+# Configure AWS services
+ses_client = boto3.client('ses')
+cloudtrail_client = boto3.client('cloudtrail')
 
-    # Send email
+# Email configuration
+sender_email = 'your_sender_email@example.com'
+recipient_email = 'your_recipient_email@example.com'
+subject = 'CloudTrail Resource Creation Report'
+
+def send_email(subject, body):
     try:
         response = ses_client.send_email(
-            Source=sender,
-            Destination={'ToAddresses': [recipient]},
+            Source=sender_email,
+            Destination={
+                'ToAddresses': [recipient_email]
+            },
             Message={
-                'Subject': {'Data': subject},
-                'Body': {'Text': {'Data': body}}
+                'Subject': {
+                    'Data': subject
+                },
+                'Body': {
+                    'Text': {
+                        'Data': body
+                    }
+                }
             }
         )
+        print("Email sent successfully!")
     except ClientError as e:
-        print(f"Email sending failed: {e.response['Error']['Message']}")
-        return False
-    else:
-        print(f"Email sent! Message ID: {response['MessageId']}")
-        return True
-
+        print("Email sending failed: ", e.response['Error']['Message'])
 
 def lambda_handler(event, context):
-    # Initialize the AWS clients
-    cloudtrail_client = boto3.client('cloudtrail')
-    iam_client = boto3.client('iam')
-
-    # Get the CloudTrail event history logs
-    response = cloudtrail_client.list_events(
-        LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateCluster'},
-            {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::ECS::Cluster'}
-        ]
-    )
-
-    # Extract the relevant information
-    logs = response['Events']
-    ecs_logs = []
-
-    for log in logs:
-        event_name = log['EventName']
-        event_time = log['EventTime']
-        resources = log['Resources']
-        
-        for resource in resources:
-            resource_type = resource['ResourceType']
-            if resource_type == 'AWS::ECS::Cluster':
-                resource_name = resource['ResourceName']
-                role_arn = resource['IAMRole']
-                try:
-                    role_name = iam_client.get_role(RoleArn=role_arn)['Role']['RoleName']
-                except ClientError as e:
-                    print(f"Failed to retrieve IAM role: {e.response['Error']['Message']}")
-                    role_name = 'Unknown'
-                ecs_logs.append({'ResourceName': resource_name, 'RoleName': role_name, 'EventName': event_name, 'EventTime': event_time})
-
-    # Prepare the email body
-    email_body = "CloudTrail event history logs for ECS:\n\n"
-    for log in ecs_logs:
-        email_body += f"Resource Name: {log['ResourceName']}, Role Name: {log['RoleName']}, Event Name: {log['EventName']}, Event Time: {log['EventTime']}\n"
-
-    # Send the email
-    sender = 'your-email@example.com'
-    recipient = 'recipient-email@example.com'
-    subject = 'CloudTrail ECS Event History Log'
+    resource_report = ''
     
-    send_email(sender, recipient, subject, email_body)
+    try:
+        response = cloudtrail_client.lookup_events(
+            LookupAttributes=[
+                {'AttributeKey': 'EventName', 'AttributeValue': 'Create*'},
+                {'AttributeKey': 'ResourceType', 'AttributeValue': '*'}
+            ],
+            MaxResults=50,  # Adjust the value based on your needs
+            StartTime=(datetime.now() - timedelta(days=1)).isoformat(),
+            EndTime=datetime.now().isoformat()
+        )
 
-    # Return the ECS logs
-    return ecs_logs
+        for event in response['Events']:
+            event_name = event['EventName']
+            event_time = event['EventTime']
+            username = event['Username']
+            resources = event['Resources']
 
+            for resource in resources:
+                resource_type = resource['ResourceType']
+                resource_name = resource['ResourceName']
+                tags = resource.get('Tags', [])
+                created_by_role = resource['AccessKeyId']
+
+                report_line = f"Event Name: {event_name}\n" \
+                              f"Event Time: {event_time}\n" \
+                              f"Username: {username}\n" \
+                              f"Resource Type: {resource_type}\n" \
+                              f"Resource Name: {resource_name}\n" \
+                              f"Tags: {tags}\n" \
+                              f"Created By Role: {created_by_role}\n\n"
+
+                resource_report += report_line
+
+        if resource_report:
+            send_email(subject, resource_report)
+        else:
+            print("No resource creation events found.")
+
+    except Exception as e:
+        print("Error: ", e)
