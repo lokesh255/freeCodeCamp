@@ -10,7 +10,7 @@ cloudtrail_client = boto3.client('cloudtrail')
 # Email configuration
 sender_email = 'your_sender_email@example.com'
 recipient_email = 'your_recipient_email@example.com'
-subject = 'CloudTrail Resource Creation Report'
+subject = 'S3 Bucket Creation Report'
 
 def send_email(subject, body):
     try:
@@ -35,13 +35,13 @@ def send_email(subject, body):
         print("Email sending failed: ", e.response['Error']['Message'])
 
 def lambda_handler(event, context):
-    resource_report = ''
-    
+    bucket_report = ''
+
     try:
         response = cloudtrail_client.lookup_events(
             LookupAttributes=[
-                {'AttributeKey': 'EventName', 'AttributeValue': 'Create*'},
-                {'AttributeKey': 'ResourceType', 'AttributeValue': '*'}
+                {'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'},
+                {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::S3::Bucket'}
             ],
             MaxResults=50,  # Adjust the value based on your needs
             StartTime=(datetime.now() - timedelta(days=1)).isoformat(),
@@ -58,7 +58,7 @@ def lambda_handler(event, context):
                 resource_type = resource['ResourceType']
                 resource_name = resource['ResourceName']
                 tags = resource.get('Tags', [])
-                created_by_role = resource['AccessKeyId']
+                created_by_role = event['UserIdentity']['SessionContext']['SessionIssuer']['UserName']
 
                 report_line = f"Event Name: {event_name}\n" \
                               f"Event Time: {event_time}\n" \
@@ -68,12 +68,12 @@ def lambda_handler(event, context):
                               f"Tags: {tags}\n" \
                               f"Created By Role: {created_by_role}\n\n"
 
-                resource_report += report_line
+                bucket_report += report_line
 
-        if resource_report:
-            send_email(subject, resource_report)
+        if bucket_report:
+            send_email(subject, bucket_report)
         else:
-            print("No resource creation events found.")
+            print("No S3 bucket creation events found.")
 
     except Exception as e:
         print("Error: ", e)
