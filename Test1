@@ -10,23 +10,23 @@ def lambda_handler(event, context):
     # Retrieve the CloudTrail event history for the specified trail
     response = cloudtrail_client.lookup_events(
         LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'},
-            {'AttributeKey': 'EventSource', 'AttributeValue': 's3.amazonaws.com'}
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateCluster'},
+            {'AttributeKey': 'EventSource', 'AttributeValue': 'ecs.amazonaws.com'}
         ],
         StartTime=event['time'],
         EndTime=event['time']
     )
 
-    # Initialize a dictionary to store bucket-to-role mappings
-    bucket_roles = {}
+    # Initialize a dictionary to store cluster-to-role mappings
+    cluster_roles = {}
 
     # Process CloudTrail events
     for event in response['Events']:
-        bucket_name = event['Resources'][0]['ResourceName']
+        cluster_name = event['Resources'][0]['ResourceName']
         role_arn = event['UserIdentity']['Arn']
 
-        # Add bucket-to-role mapping to the dictionary
-        bucket_roles[bucket_name] = role_arn
+        # Add cluster-to-role mapping to the dictionary
+        cluster_roles[cluster_name] = role_arn
 
     # Create an IAM client
     iam_client = boto3.client('iam')
@@ -34,8 +34,8 @@ def lambda_handler(event, context):
     # Initialize a dictionary to store role-to-tag mappings
     role_tags = {}
 
-    # Process roles associated with bucket creation events
-    for role_arn in bucket_roles.values():
+    # Process roles associated with cluster creation events
+    for role_arn in cluster_roles.values():
         # Get the tags associated with the IAM role
         response = iam_client.list_role_tags(RoleName=role_arn.split('/')[-1])
 
@@ -51,9 +51,9 @@ def lambda_handler(event, context):
         role_tags[role_arn] = tag_exists
 
     # Generate the report
-    report = "Bucket Creation Report:\n\n"
-    for bucket_name, role_arn in bucket_roles.items():
-        report += f"Bucket: {bucket_name}\n"
+    report = "ECS Cluster Creation Report:\n\n"
+    for cluster_name, role_arn in cluster_roles.items():
+        report += f"Cluster: {cluster_name}\n"
         report += f"Created by Role: {role_arn}\n"
         report += f"Role has Required Tag: {role_tags[role_arn]}\n\n"
 
