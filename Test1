@@ -1,79 +1,83 @@
 import boto3
-import json
-import os
-from botocore.exceptions import ClientError
-
-# Configure AWS services
-ses_client = boto3.client('ses')
-cloudtrail_client = boto3.client('cloudtrail')
-
-# Email configuration
-sender_email = 'your_sender_email@example.com'
-recipient_email = 'your_recipient_email@example.com'
-subject = 'S3 Bucket Creation Report'
-
-def send_email(subject, body):
-    try:
-        response = ses_client.send_email(
-            Source=sender_email,
-            Destination={
-                'ToAddresses': [recipient_email]
-            },
-            Message={
-                'Subject': {
-                    'Data': subject
-                },
-                'Body': {
-                    'Text': {
-                        'Data': body
-                    }
-                }
-            }
-        )
-        print("Email sent successfully!")
-    except ClientError as e:
-        print("Email sending failed: ", e.response['Error']['Message'])
 
 def lambda_handler(event, context):
-    bucket_report = ''
+    # Create a CloudTrail client
+    cloudtrail_client = boto3.client('cloudtrail')
 
-    try:
-        response = cloudtrail_client.lookup_events(
-            LookupAttributes=[
-                {'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'},
-                {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::S3::Bucket'}
-            ],
-            MaxResults=50,  # Adjust the value based on your needs
-            StartTime=(datetime.now() - timedelta(days=1)).isoformat(),
-            EndTime=datetime.now().isoformat()
-        )
+    # Specify the name of the CloudTrail trail
+    trail_name = '<YOUR_CLOUDTRAIL_TRAIL_NAME>'
 
-        for event in response['Events']:
-            event_name = event['EventName']
-            event_time = event['EventTime']
-            username = event['Username']
-            resources = event['Resources']
+    # Retrieve the CloudTrail event history for the specified trail
+    response = cloudtrail_client.lookup_events(
+        LookupAttributes=[
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'},
+            {'AttributeKey': 'EventSource', 'AttributeValue': 's3.amazonaws.com'}
+        ],
+        StartTime=event['time'],
+        EndTime=event['time']
+    )
 
-            for resource in resources:
-                resource_type = resource['ResourceType']
-                resource_name = resource['ResourceName']
-                tags = resource.get('Tags', [])
-                created_by_role = event['UserIdentity']['SessionContext']['SessionIssuer']['UserName']
+    # Initialize a dictionary to store bucket-to-role mappings
+    bucket_roles = {}
 
-                report_line = f"Event Name: {event_name}\n" \
-                              f"Event Time: {event_time}\n" \
-                              f"Username: {username}\n" \
-                              f"Resource Type: {resource_type}\n" \
-                              f"Resource Name: {resource_name}\n" \
-                              f"Tags: {tags}\n" \
-                              f"Created By Role: {created_by_role}\n\n"
+    # Process CloudTrail events
+    for event in response['Events']:
+        bucket_name = event['Resources'][0]['ResourceName']
+        role_arn = event['UserIdentity']['Arn']
 
-                bucket_report += report_line
+        # Add bucket-to-role mapping to the dictionary
+        bucket_roles[bucket_name] = role_arn
 
-        if bucket_report:
-            send_email(subject, bucket_report)
-        else:
-            print("No S3 bucket creation events found.")
+    # Create an IAM client
+    iam_client = boto3.client('iam')
 
-    except Exception as e:
-        print("Error: ", e)
+    # Initialize a dictionary to store role-to-tag mappings
+    role_tags = {}
+
+    # Process roles associated with bucket creation events
+    for role_arn in bucket_roles.values():
+        # Get the tags associated with the IAM role
+        response = iam_client.list_role_tags(RoleName=role_arn.split('/')[-1])
+
+        # Check if a specific tag exists on the role
+        tag_exists = False
+        if 'Tags' in response:
+            for tag in response['Tags']:
+                if tag['Key'] == '<YOUR_TAG_KEY>' and tag['Value'] == '<YOUR_TAG_VALUE>':
+                    tag_exists = True
+                    break
+
+        # Add role-to-tag mapping to the dictionary
+        role_tags[role_arn] = tag_exists
+
+    # Generate the report
+    report = "Bucket Creation Report:\n\n"
+    for bucket_name, role_arn in bucket_roles.items():
+        report += f"Bucket: {bucket_name}\n"
+        report += f"Created by Role: {role_arn}\n"
+        report += f"Role has Required Tag: {role_tags[role_arn]}\n\n"
+
+    # Send an email notification using Amazon SES
+    send_email(report)
+
+def send_email(message):
+    # Create an SES client
+    ses_client = boto3.client('ses')
+
+    # Specify the sender and recipient email addresses
+    sender_email = '<SENDER_EMAIL_ADDRESS>'
+    recipient_email = '<RECIPIENT_EMAIL_ADDRESS>'
+
+    # Specify the email subject and body
+    subject = 'CloudTrail Log Analysis Report'
+    body = f"CloudTrail analysis report:\n\n{message}"
+
+    # Send the email
+    response = ses_client.send_email(
+        Source=sender_email,
+        Destination={'ToAddresses': [recipient_email]},
+        Message={
+            'Subject': {'Data': subject},
+            'Body': {'Text': {'Data': body}}
+        }
+    )
