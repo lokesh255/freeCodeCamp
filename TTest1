@@ -45,6 +45,15 @@ def lambda_handler(event, context):
                 }
                 lambda_creations.append(lambda_creation_info)
 
+    # Print Lambda creation logs
+    print("Lambda Function Creation Report:\n")
+    for lambda_function in lambda_creations:
+        print(f"Event Time: {lambda_function['EventTime']}")
+        print(f"Event Username: {lambda_function['EventUsername']}")
+        print(f"Role Name: {lambda_function['RoleName']}")
+        print(f"Role Has Tag: {lambda_function['RoleHasTag']}")
+        print("---------------------------------------------")
+
     # Create email report body
     email_body = "Lambda Function Creation Report:\n\n"
     for lambda_function in lambda_creations:
