@@ -18,17 +18,17 @@ def lambda_handler(event, context):
     ses = boto3.client('ses', region_name=ses_region)
 
     # Retrieve CloudTrail events
-    response = cloudtrail.lookup_events(LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateCluster'}],
+    response = cloudtrail.lookup_events(LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'}],
                                         MaxResults=50)  # Adjust MaxResults as needed
 
-    cluster_creations = []
+    lambda_creations = []
     for event in response['Events']:
         resources = event['Resources']
         for resource in resources:
-            if resource['ResourceType'] == 'AWS::EMR::Cluster':
+            if resource['ResourceType'] == 'AWS::Lambda::Function':
                 event_username = event['Username']
 
-                # Retrieve the role used for creating the cluster
+                # Retrieve the role used for creating the Lambda function
                 role_arn = resource['ARN']
                 role_name = role_arn.split('/')[-1]
                 role_response = iam.get_role(RoleName=role_name)
@@ -37,25 +37,25 @@ def lambda_handler(event, context):
                 # Check if the role has the desired tag
                 role_has_tag = any(tag['Key'] == tag_key for tag in role_tags)
 
-                cluster_creation_info = {
+                lambda_creation_info = {
                     'EventTime': str(event['EventTime']),
                     'EventUsername': event_username,
                     'RoleName': role_name,
                     'RoleHasTag': role_has_tag
                 }
-                cluster_creations.append(cluster_creation_info)
+                lambda_creations.append(lambda_creation_info)
 
     # Create email report body
-    email_body = "Cluster Creation Report:\n\n"
-    for cluster in cluster_creations:
-        email_body += f"Event Time: {cluster['EventTime']}\n"
-        email_body += f"Event Username: {cluster['EventUsername']}\n"
-        email_body += f"Role Name: {cluster['RoleName']}\n"
-        email_body += f"Role Has Tag: {cluster['RoleHasTag']}\n"
+    email_body = "Lambda Function Creation Report:\n\n"
+    for lambda_function in lambda_creations:
+        email_body += f"Event Time: {lambda_function['EventTime']}\n"
+        email_body += f"Event Username: {lambda_function['EventUsername']}\n"
+        email_body += f"Role Name: {lambda_function['RoleName']}\n"
+        email_body += f"Role Has Tag: {lambda_function['RoleHasTag']}\n"
         email_body += "---------------------------------------------\n"
 
     # Send email using AWS SES
-    email_subject = "Cluster Creation Report"
+    email_subject = "Lambda Function Creation Report"
     response = ses.send_email(
         Source=sender_email,
         Destination={
