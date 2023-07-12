@@ -18,23 +18,26 @@ def lambda_handler(event, context):
     ses = boto3.client('ses', region_name=ses_region)
 
     # Retrieve CloudTrail events
-    response = cloudtrail.lookup_events(LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'}],
-                                        MaxResults=50)  # Adjust MaxResults as needed
+    response = cloudtrail.lookup_events(
+        LookupAttributes=[
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
+            {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::Lambda::Function'}
+        ],
+        MaxResults=50  # Adjust MaxResults as needed
+    )
 
     lambda_creations = []
     for event in response['Events']:
+        event_username = event['Username']
         resources = event['Resources']
         for resource in resources:
             if resource['ResourceType'] == 'AWS::Lambda::Function':
-                event_username = event['Username']
-
-                # Retrieve the role used for creating the Lambda function
                 role_arn = resource['ARN']
                 role_name = role_arn.split('/')[-1]
+
                 role_response = iam.get_role(RoleName=role_name)
                 role_tags = role_response['Role']['Tags']
 
-                # Check if the role has the desired tag
                 role_has_tag = any(tag['Key'] == tag_key for tag in role_tags)
 
                 lambda_creation_info = {
