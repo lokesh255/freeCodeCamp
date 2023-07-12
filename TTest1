@@ -1,85 +1,79 @@
 import boto3
+import json
+import os
+from botocore.exceptions import ClientError
+
+# Configure AWS services
+ses_client = boto3.client('ses')
+cloudtrail_client = boto3.client('cloudtrail')
+
+# Email configuration
+sender_email = 'your_sender_email@example.com'
+recipient_email = 'your_recipient_email@example.com'
+subject = 'Lambda Function Creation Report'
+
+def send_email(subject, body):
+    try:
+        response = ses_client.send_email(
+            Source=sender_email,
+            Destination={
+                'ToAddresses': [recipient_email]
+            },
+            Message={
+                'Subject': {
+                    'Data': subject
+                },
+                'Body': {
+                    'Text': {
+                        'Data': body
+                    }
+                }
+            }
+        )
+        print("Email sent successfully!")
+    except ClientError as e:
+        print("Email sending failed: ", e.response['Error']['Message'])
 
 def lambda_handler(event, context):
-    # AWS SES configuration
-    ses_region = 'us-west-2'  # Replace with your SES region
-    sender_email = 'sender@example.com'  # Replace with your sender email address
-    recipient_email = 'recipient@example.com'  # Replace with your recipient email address
+    function_report = ''
 
-    # AWS CloudTrail configuration
-    trail_name = 'my-cloudtrail'  # Replace with your CloudTrail trail name
+    try:
+        response = cloudtrail_client.lookup_events(
+            LookupAttributes=[
+                {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
+                {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::Lambda::Function'}
+            ],
+            MaxResults=50,  # Adjust the value based on your needs
+            StartTime=(datetime.now() - timedelta(days=1)).isoformat(),
+            EndTime=datetime.now().isoformat()
+        )
 
-    # AWS IAM configuration
-    tag_key = 'my-tag-key'  # Replace with your desired tag key
+        for event in response['Events']:
+            event_name = event['EventName']
+            event_time = event['EventTime']
+            username = event['Username']
+            resources = event['Resources']
 
-    # Initialize AWS clients
-    cloudtrail = boto3.client('cloudtrail')
-    iam = boto3.client('iam')
-    ses = boto3.client('ses', region_name=ses_region)
+            for resource in resources:
+                resource_type = resource['ResourceType']
+                resource_name = resource['ResourceName']
+                tags = resource.get('Tags', [])
+                created_by_role = event['UserIdentity']['SessionContext']['SessionIssuer']['UserName']
 
-    # Retrieve CloudTrail events
-    response = cloudtrail.lookup_events(
-        LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
-            {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::Lambda::Function'}
-        ],
-        MaxResults=50  # Adjust MaxResults as needed
-    )
+                report_line = f"Event Name: {event_name}\n" \
+                              f"Event Time: {event_time}\n" \
+                              f"Username: {username}\n" \
+                              f"Resource Type: {resource_type}\n" \
+                              f"Resource Name: {resource_name}\n" \
+                              f"Tags: {tags}\n" \
+                              f"Created By Role: {created_by_role}\n\n"
 
-    lambda_creations = []
-    for event in response['Events']:
-        event_username = event['Username']
-        resources = event['Resources']
-        for resource in resources:
-            if resource['ResourceType'] == 'AWS::Lambda::Function':
-                role_arn = resource['ARN']
-                role_name = role_arn.split('/')[-1]
+                function_report += report_line
 
-                role_response = iam.get_role(RoleName=role_name)
-                role_tags = role_response['Role']['Tags']
+        if function_report:
+            send_email(subject, function_report)
+        else:
+            print("No Lambda function creation events found.")
 
-                role_has_tag = any(tag['Key'] == tag_key for tag in role_tags)
-
-                lambda_creation_info = {
-                    'EventTime': str(event['EventTime']),
-                    'EventUsername': event_username,
-                    'RoleName': role_name,
-                    'RoleHasTag': role_has_tag
-                }
-                lambda_creations.append(lambda_creation_info)
-
-    # Print Lambda creation logs
-    print("Lambda Function Creation Report:\n")
-    for lambda_function in lambda_creations:
-        print(f"Event Time: {lambda_function['EventTime']}")
-        print(f"Event Username: {lambda_function['EventUsername']}")
-        print(f"Role Name: {lambda_function['RoleName']}")
-        print(f"Role Has Tag: {lambda_function['RoleHasTag']}")
-        print("---------------------------------------------")
-
-    # Create email report body
-    email_body = "Lambda Function Creation Report:\n\n"
-    for lambda_function in lambda_creations:
-        email_body += f"Event Time: {lambda_function['EventTime']}\n"
-        email_body += f"Event Username: {lambda_function['EventUsername']}\n"
-        email_body += f"Role Name: {lambda_function['RoleName']}\n"
-        email_body += f"Role Has Tag: {lambda_function['RoleHasTag']}\n"
-        email_body += "---------------------------------------------\n"
-
-    # Send email using AWS SES
-    email_subject = "Lambda Function Creation Report"
-    response = ses.send_email(
-        Source=sender_email,
-        Destination={
-            'ToAddresses': [recipient_email]
-        },
-        Message={
-            'Subject': {'Data': email_subject},
-            'Body': {'Text': {'Data': email_body}}
-        }
-    )
-
-    return {
-        'statusCode': 200,
-        'body': 'Email sent successfully!'
-    }
+    except Exception as e:
+        print("Error: ", e)
