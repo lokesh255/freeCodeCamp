@@ -1,6 +1,5 @@
 import boto3
-import json
-import os
+from datetime import datetime, timedelta
 from botocore.exceptions import ClientError
 
 # Configure AWS services
@@ -10,7 +9,7 @@ cloudtrail_client = boto3.client('cloudtrail')
 # Email configuration
 sender_email = 'your_sender_email@example.com'
 recipient_email = 'your_recipient_email@example.com'
-subject = 'Lambda Function Creation Report'
+subject = 'Lambda Function Event History Report'
 
 def send_email(subject, body):
     try:
@@ -40,7 +39,6 @@ def lambda_handler(event, context):
     try:
         response = cloudtrail_client.lookup_events(
             LookupAttributes=[
-                {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
                 {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::Lambda::Function'}
             ],
             MaxResults=50,  # Adjust the value based on your needs
@@ -49,31 +47,27 @@ def lambda_handler(event, context):
         )
 
         for event in response['Events']:
-            event_name = event['EventName']
-            event_time = event['EventTime']
-            username = event['Username']
             resources = event['Resources']
 
             for resource in resources:
-                resource_type = resource['ResourceType']
                 resource_name = resource['ResourceName']
+                event_name = event['EventName']
+                role_arn = event['UserIdentity']['Arn']
+                attached_role = event['UserIdentity']['SessionContext']['SessionIssuer']['Arn']
                 tags = resource.get('Tags', [])
-                created_by_role = event['UserIdentity']['SessionContext']['SessionIssuer']['UserName']
 
-                report_line = f"Event Name: {event_name}\n" \
-                              f"Event Time: {event_time}\n" \
-                              f"Username: {username}\n" \
-                              f"Resource Type: {resource_type}\n" \
-                              f"Resource Name: {resource_name}\n" \
-                              f"Tags: {tags}\n" \
-                              f"Created By Role: {created_by_role}\n\n"
+                report_line = f"Resource Name: {resource_name}\n" \
+                              f"Event Name: {event_name}\n" \
+                              f"Assumed Role ARN: {role_arn}\n" \
+                              f"Attached Role: {attached_role}\n" \
+                              f"Tags: {tags}\n\n"
 
                 function_report += report_line
 
         if function_report:
             send_email(subject, function_report)
         else:
-            print("No Lambda function creation events found.")
+            print("No Lambda function event history found.")
 
     except Exception as e:
         print("Error: ", e)
