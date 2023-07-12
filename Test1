@@ -1,83 +1,73 @@
 import boto3
 
 def lambda_handler(event, context):
-    # Create a CloudTrail client
-    cloudtrail_client = boto3.client('cloudtrail')
+    # AWS SES configuration
+    ses_region = 'us-west-2'  # Replace with your SES region
+    sender_email = 'sender@example.com'  # Replace with your sender email address
+    recipient_email = 'recipient@example.com'  # Replace with your recipient email address
 
-    # Specify the name of the CloudTrail trail
-    trail_name = '<YOUR_CLOUDTRAIL_TRAIL_NAME>'
+    # AWS CloudTrail configuration
+    trail_name = 'my-cloudtrail'  # Replace with your CloudTrail trail name
 
-    # Retrieve the CloudTrail event history for the specified trail
-    response = cloudtrail_client.lookup_events(
-        LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateCluster'},
-            {'AttributeKey': 'EventSource', 'AttributeValue': 'ecs.amazonaws.com'}
-        ],
-        StartTime=event['time'],
-        EndTime=event['time']
-    )
+    # AWS IAM configuration
+    tag_key = 'my-tag-key'  # Replace with your desired tag key
 
-    # Initialize a dictionary to store cluster-to-role mappings
-    cluster_roles = {}
+    # Initialize AWS clients
+    cloudtrail = boto3.client('cloudtrail')
+    iam = boto3.client('iam')
+    ses = boto3.client('ses', region_name=ses_region)
 
-    # Process CloudTrail events
+    # Retrieve CloudTrail events
+    response = cloudtrail.lookup_events(LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateCluster'}],
+                                        MaxResults=50)  # Adjust MaxResults as needed
+
+    cluster_creations = []
     for event in response['Events']:
-        cluster_name = event['Resources'][0]['ResourceName']
-        role_arn = event['UserIdentity']['Arn']
+        resources = event['Resources']
+        for resource in resources:
+            if resource['ResourceType'] == 'AWS::EMR::Cluster':
+                event_username = event['Username']
 
-        # Add cluster-to-role mapping to the dictionary
-        cluster_roles[cluster_name] = role_arn
+                # Retrieve the role used for creating the cluster
+                role_arn = resource['ARN']
+                role_name = role_arn.split('/')[-1]
+                role_response = iam.get_role(RoleName=role_name)
+                role_tags = role_response['Role']['Tags']
 
-    # Create an IAM client
-    iam_client = boto3.client('iam')
+                # Check if the role has the desired tag
+                role_has_tag = any(tag['Key'] == tag_key for tag in role_tags)
 
-    # Initialize a dictionary to store role-to-tag mappings
-    role_tags = {}
+                cluster_creation_info = {
+                    'EventTime': str(event['EventTime']),
+                    'EventUsername': event_username,
+                    'RoleName': role_name,
+                    'RoleHasTag': role_has_tag
+                }
+                cluster_creations.append(cluster_creation_info)
 
-    # Process roles associated with cluster creation events
-    for role_arn in cluster_roles.values():
-        # Get the tags associated with the IAM role
-        response = iam_client.list_role_tags(RoleName=role_arn.split('/')[-1])
+    # Create email report body
+    email_body = "Cluster Creation Report:\n\n"
+    for cluster in cluster_creations:
+        email_body += f"Event Time: {cluster['EventTime']}\n"
+        email_body += f"Event Username: {cluster['EventUsername']}\n"
+        email_body += f"Role Name: {cluster['RoleName']}\n"
+        email_body += f"Role Has Tag: {cluster['RoleHasTag']}\n"
+        email_body += "---------------------------------------------\n"
 
-        # Check if a specific tag exists on the role
-        tag_exists = False
-        if 'Tags' in response:
-            for tag in response['Tags']:
-                if tag['Key'] == '<YOUR_TAG_KEY>' and tag['Value'] == '<YOUR_TAG_VALUE>':
-                    tag_exists = True
-                    break
-
-        # Add role-to-tag mapping to the dictionary
-        role_tags[role_arn] = tag_exists
-
-    # Generate the report
-    report = "ECS Cluster Creation Report:\n\n"
-    for cluster_name, role_arn in cluster_roles.items():
-        report += f"Cluster: {cluster_name}\n"
-        report += f"Created by Role: {role_arn}\n"
-        report += f"Role has Required Tag: {role_tags[role_arn]}\n\n"
-
-    # Send an email notification using Amazon SES
-    send_email(report)
-
-def send_email(message):
-    # Create an SES client
-    ses_client = boto3.client('ses')
-
-    # Specify the sender and recipient email addresses
-    sender_email = '<SENDER_EMAIL_ADDRESS>'
-    recipient_email = '<RECIPIENT_EMAIL_ADDRESS>'
-
-    # Specify the email subject and body
-    subject = 'CloudTrail Log Analysis Report'
-    body = f"CloudTrail analysis report:\n\n{message}"
-
-    # Send the email
-    response = ses_client.send_email(
+    # Send email using AWS SES
+    email_subject = "Cluster Creation Report"
+    response = ses.send_email(
         Source=sender_email,
-        Destination={'ToAddresses': [recipient_email]},
+        Destination={
+            'ToAddresses': [recipient_email]
+        },
         Message={
-            'Subject': {'Data': subject},
-            'Body': {'Text': {'Data': body}}
+            'Subject': {'Data': email_subject},
+            'Body': {'Text': {'Data': email_body}}
         }
     )
+
+    return {
+        'statusCode': 200,
+        'body': 'Email sent successfully!'
+    }
