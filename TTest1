@@ -24,12 +24,14 @@ def lambda_handler(event, context):
         user_identity = event['UserIdentity']
         function_name = event['Resources'][0]['ResourceName']
         role_arn = event['Resources'][0]['ARN']
+        tags = event['Resources'][0].get('Tags', [])
 
         function_info.append({
             'EventName': event_name,
             'User': user_identity['Arn'],
             'FunctionName': function_name,
-            'RoleARN': role_arn
+            'RoleARN': role_arn,
+            'Tags': tags
         })
 
     # Prepare the email body
@@ -38,7 +40,8 @@ def lambda_handler(event, context):
         email_body += f"Event Name: {info['EventName']}\n"
         email_body += f"User: {info['User']}\n"
         email_body += f"Function Name: {info['FunctionName']}\n"
-        email_body += f"Role ARN: {info['RoleARN']}\n\n"
+        email_body += f"Role ARN: {info['RoleARN']}\n"
+        email_body += f"Tags: {info['Tags']}\n\n"
 
     # Create an SES client
     ses = boto3.client('ses')
