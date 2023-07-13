@@ -1,73 +1,62 @@
 import boto3
-from datetime import datetime, timedelta
-from botocore.exceptions import ClientError
-
-# Configure AWS services
-ses_client = boto3.client('ses')
-cloudtrail_client = boto3.client('cloudtrail')
-
-# Email configuration
-sender_email = 'your_sender_email@example.com'
-recipient_email = 'your_recipient_email@example.com'
-subject = 'Lambda Function Event History Report'
-
-def send_email(subject, body):
-    try:
-        response = ses_client.send_email(
-            Source=sender_email,
-            Destination={
-                'ToAddresses': [recipient_email]
-            },
-            Message={
-                'Subject': {
-                    'Data': subject
-                },
-                'Body': {
-                    'Text': {
-                        'Data': body
-                    }
-                }
-            }
-        )
-        print("Email sent successfully!")
-    except ClientError as e:
-        print("Email sending failed: ", e.response['Error']['Message'])
 
 def lambda_handler(event, context):
-    function_report = ''
+    # Create a CloudTrail client
+    cloudtrail = boto3.client('cloudtrail')
 
-    try:
-        response = cloudtrail_client.lookup_events(
-            LookupAttributes=[
-                {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::Lambda::Function'}
-            ],
-            MaxResults=50,  # Adjust the value based on your needs
-            StartTime=(datetime.now() - timedelta(days=1)).isoformat(),
-            EndTime=datetime.now().isoformat()
-        )
+    # Get the events from the CloudTrail event history
+    response = cloudtrail.lookup_events(
+        LookupAttributes=[
+            {
+                'AttributeKey': 'EventName',
+                'AttributeValue': 'CreateFunction'  # Filter events for Lambda function creation
+            },
+        ],
+        MaxResults=50  # Adjust the number of events to retrieve as per your requirement
+    )
 
-        for event in response['Events']:
-            resources = event['Resources']
+    # Initialize variables for storing function information
+    function_info = []
 
-            for resource in resources:
-                resource_name = resource['ResourceName']
-                event_name = event['EventName']
-                role_arn = event['UserIdentity']['Arn']
-                attached_role = event['UserIdentity']['SessionContext']['SessionIssuer']['Arn']
-                tags = resource.get('Tags', [])
+    # Loop through the events and retrieve function information
+    for event in response['Events']:
+        event_name = event['EventName']
+        user_identity = event['UserIdentity']
+        function_name = event['Resources'][0]['ResourceName']
+        role_arn = event['Resources'][0]['ARN']
 
-                report_line = f"Resource Name: {resource_name}\n" \
-                              f"Event Name: {event_name}\n" \
-                              f"Assumed Role ARN: {role_arn}\n" \
-                              f"Attached Role: {attached_role}\n" \
-                              f"Tags: {tags}\n\n"
+        function_info.append({
+            'EventName': event_name,
+            'User': user_identity['Arn'],
+            'FunctionName': function_name,
+            'RoleARN': role_arn
+        })
 
-                function_report += report_line
+    # Prepare the email body
+    email_body = "Lambda Function Creation Report:\n\n"
+    for info in function_info:
+        email_body += f"Event Name: {info['EventName']}\n"
+        email_body += f"User: {info['User']}\n"
+        email_body += f"Function Name: {info['FunctionName']}\n"
+        email_body += f"Role ARN: {info['RoleARN']}\n\n"
 
-        if function_report:
-            send_email(subject, function_report)
-        else:
-            print("No Lambda function event history found.")
+    # Create an SES client
+    ses = boto3.client('ses')
 
-    except Exception as e:
-        print("Error: ", e)
+    # Send the email
+    ses.send_email(
+        Source='sender@example.com',  # Replace with the sender email address
+        Destination={
+            'ToAddresses': ['recipient@example.com']  # Replace with the recipient email address(es)
+        },
+        Message={
+            'Subject': {
+                'Data': 'Lambda Function Creation Report'
+            },
+            'Body': {
+                'Text': {
+                    'Data': email_body
+                }
+            }
+        }
+    )
