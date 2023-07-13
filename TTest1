@@ -1,86 +1,73 @@
 import boto3
-import json
-import os
-import datetime
+from datetime import datetime, timedelta
 from botocore.exceptions import ClientError
 
-# AWS SES configuration
-SENDER = "your-email@example.com"  # Sender email address
-RECIPIENT = "recipient-email@example.com"  # Recipient email address
-AWS_REGION = "us-west-2"  # AWS Region for SES
+# Configure AWS services
+ses_client = boto3.client('ses')
+cloudtrail_client = boto3.client('cloudtrail')
 
-# CloudTrail configuration
-CLOUDTRAIL_REGION = "us-west-2"  # AWS Region where CloudTrail is enabled
-BUCKET_CREATION_EVENT_NAME = "CreateBucket"  # Event name for S3 bucket creation in CloudTrail
+# Email configuration
+sender_email = 'your_sender_email@example.com'
+recipient_email = 'your_recipient_email@example.com'
+subject = 'Lambda Function Event History Report'
 
-def lambda_handler(event, context):
-    # Initialize AWS clients
-    cloudtrail_client = boto3.client("cloudtrail", region_name=CLOUDTRAIL_REGION)
-    ses_client = boto3.client("ses", region_name=AWS_REGION)
-    
-    # Retrieve S3 bucket creation events from CloudTrail
-    response = cloudtrail_client.lookup_events(
-        LookupAttributes=[
-            {
-                "AttributeKey": "EventName",
-                "AttributeValue": BUCKET_CREATION_EVENT_NAME
-            }
-        ],
-        MaxResults=50,  # Adjust the number of events to retrieve as per your requirements
-        StartTime=datetime.datetime.now() - datetime.timedelta(days=7),  # Adjust the time range as per your requirements
-    )
-    
-    # Process CloudTrail events and generate report
-    report = []
-    
-    for event in response["Events"]:
-        # Extract relevant details from the CloudTrail event
-        creator_arn = event["Username"]
-        bucket_name = event["Resources"][0]["ResourceName"]
-        has_tags = False if "Tags" not in event["Resources"][0] else True
-        
-        # Retrieve the role used for bucket creation
-        role_arn = ""
-        try:
-            iam_client = boto3.client("iam")
-            response = iam_client.get_user(UserName=creator_arn)
-            role_arn = response["User"]["Arn"]
-        except ClientError as e:
-            print(f"Failed to retrieve role ARN for {creator_arn}: {str(e)}")
-        
-        # Append details to the report
-        report.append({
-            "BucketName": bucket_name,
-            "CreatorRoleARN": role_arn,
-            "HasTags": has_tags
-        })
-    
-    # Generate report in JSON format
-    report_json = json.dumps(report, indent=4)
-    
-    # Send the report via email
+def send_email(subject, body):
     try:
         response = ses_client.send_email(
-            Source=SENDER,
+            Source=sender_email,
             Destination={
-                "ToAddresses": [RECIPIENT]
+                'ToAddresses': [recipient_email]
             },
             Message={
-                "Subject": {
-                    "Data": "S3 Bucket Creation Report"
+                'Subject': {
+                    'Data': subject
                 },
-                "Body": {
-                    "Text": {
-                        "Data": report_json
+                'Body': {
+                    'Text': {
+                        'Data': body
                     }
                 }
             }
         )
-        print("Email sent successfully.")
+        print("Email sent successfully!")
     except ClientError as e:
-        print(f"Failed to send email: {str(e)}")
-    
-    return {
-        "statusCode": 200,
-        "body": report_json
-    }
+        print("Email sending failed: ", e.response['Error']['Message'])
+
+def lambda_handler(event, context):
+    function_report = ''
+
+    try:
+        response = cloudtrail_client.lookup_events(
+            LookupAttributes=[
+                {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::Lambda::Function'}
+            ],
+            MaxResults=50,  # Adjust the value based on your needs
+            StartTime=(datetime.now() - timedelta(days=1)).isoformat(),
+            EndTime=datetime.now().isoformat()
+        )
+
+        for event in response['Events']:
+            resources = event.get('Resources', [])
+
+            for resource in resources:
+                resource_name = resource.get('ResourceName', '')
+                event_name = event.get('EventName', '')
+                function_name = resource_name.split(':')[-1]
+                attached_role = event.get('UserIdentity', {}).get('SessionContext', {}).get('SessionIssuer', {}).get('Arn', '')
+                tags = resource.get('Tags', [])
+
+                report_line = f"Resource Name: {resource_name}\n" \
+                              f"Event Name: {event_name}\n" \
+                              f"Function Name: {function_name}\n" \
+                              f"Attached IAM Role: {attached_role}\n" \
+                              f"Tags: {tags}\n\n"
+
+                function_report += report_line
+
+        if function_report:
+            send_email(subject, function_report)
+        else:
+            print("No Lambda function event history found.")
+
+    except Exception as e:
+        print("Error: ", e)
