@@ -1,65 +1,86 @@
 import boto3
+import json
+import os
+import datetime
+from botocore.exceptions import ClientError
+
+# AWS SES configuration
+SENDER = "your-email@example.com"  # Sender email address
+RECIPIENT = "recipient-email@example.com"  # Recipient email address
+AWS_REGION = "us-west-2"  # AWS Region for SES
+
+# CloudTrail configuration
+CLOUDTRAIL_REGION = "us-west-2"  # AWS Region where CloudTrail is enabled
+BUCKET_CREATION_EVENT_NAME = "CreateBucket"  # Event name for S3 bucket creation in CloudTrail
 
 def lambda_handler(event, context):
-    # Create a CloudTrail client
-    cloudtrail = boto3.client('cloudtrail')
-
-    # Get the events from the CloudTrail event history
-    response = cloudtrail.lookup_events(
+    # Initialize AWS clients
+    cloudtrail_client = boto3.client("cloudtrail", region_name=CLOUDTRAIL_REGION)
+    ses_client = boto3.client("ses", region_name=AWS_REGION)
+    
+    # Retrieve S3 bucket creation events from CloudTrail
+    response = cloudtrail_client.lookup_events(
         LookupAttributes=[
             {
-                'AttributeKey': 'EventName',
-                'AttributeValue': 'CreateFunction'  # Filter events for Lambda function creation
-            },
+                "AttributeKey": "EventName",
+                "AttributeValue": BUCKET_CREATION_EVENT_NAME
+            }
         ],
-        MaxResults=50  # Adjust the number of events to retrieve as per your requirement
+        MaxResults=50,  # Adjust the number of events to retrieve as per your requirements
+        StartTime=datetime.datetime.now() - datetime.timedelta(days=7),  # Adjust the time range as per your requirements
     )
-
-    # Initialize variables for storing function information
-    function_info = []
-
-    # Loop through the events and retrieve function information
-    for event in response['Events']:
-        event_name = event['EventName']
-        user_identity = event['UserIdentity']
-        function_name = event['Resources'][0]['ResourceName']
-        role_arn = event['Resources'][0]['ARN']
-        tags = event['Resources'][0].get('Tags', [])
-
-        function_info.append({
-            'EventName': event_name,
-            'User': user_identity['Arn'],
-            'FunctionName': function_name,
-            'RoleARN': role_arn,
-            'Tags': tags
+    
+    # Process CloudTrail events and generate report
+    report = []
+    
+    for event in response["Events"]:
+        # Extract relevant details from the CloudTrail event
+        creator_arn = event["Username"]
+        bucket_name = event["Resources"][0]["ResourceName"]
+        has_tags = False if "Tags" not in event["Resources"][0] else True
+        
+        # Retrieve the role used for bucket creation
+        role_arn = ""
+        try:
+            iam_client = boto3.client("iam")
+            response = iam_client.get_user(UserName=creator_arn)
+            role_arn = response["User"]["Arn"]
+        except ClientError as e:
+            print(f"Failed to retrieve role ARN for {creator_arn}: {str(e)}")
+        
+        # Append details to the report
+        report.append({
+            "BucketName": bucket_name,
+            "CreatorRoleARN": role_arn,
+            "HasTags": has_tags
         })
-
-    # Prepare the email body
-    email_body = "Lambda Function Creation Report:\n\n"
-    for info in function_info:
-        email_body += f"Event Name: {info['EventName']}\n"
-        email_body += f"User: {info['User']}\n"
-        email_body += f"Function Name: {info['FunctionName']}\n"
-        email_body += f"Role ARN: {info['RoleARN']}\n"
-        email_body += f"Tags: {info['Tags']}\n\n"
-
-    # Create an SES client
-    ses = boto3.client('ses')
-
-    # Send the email
-    ses.send_email(
-        Source='sender@example.com',  # Replace with the sender email address
-        Destination={
-            'ToAddresses': ['recipient@example.com']  # Replace with the recipient email address(es)
-        },
-        Message={
-            'Subject': {
-                'Data': 'Lambda Function Creation Report'
+    
+    # Generate report in JSON format
+    report_json = json.dumps(report, indent=4)
+    
+    # Send the report via email
+    try:
+        response = ses_client.send_email(
+            Source=SENDER,
+            Destination={
+                "ToAddresses": [RECIPIENT]
             },
-            'Body': {
-                'Text': {
-                    'Data': email_body
+            Message={
+                "Subject": {
+                    "Data": "S3 Bucket Creation Report"
+                },
+                "Body": {
+                    "Text": {
+                        "Data": report_json
+                    }
                 }
             }
-        }
-    )
+        )
+        print("Email sent successfully.")
+    except ClientError as e:
+        print(f"Failed to send email: {str(e)}")
+    
+    return {
+        "statusCode": 200,
+        "body": report_json
+    }
