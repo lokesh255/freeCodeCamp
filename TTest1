@@ -1,73 +1,59 @@
 import boto3
-from datetime import datetime, timedelta
-from botocore.exceptions import ClientError
 
-# Configure AWS services
-ses_client = boto3.client('ses')
-cloudtrail_client = boto3.client('cloudtrail')
-
-# Email configuration
-sender_email = 'your_sender_email@example.com'
-recipient_email = 'your_recipient_email@example.com'
-subject = 'Lambda Function Event History Report'
-
-def send_email(subject, body):
+def lambda_handler(event, context):
+    # Specify your SES email address
+    sender_email = "your_sender_email@example.com"
+    
+    # Specify the recipients' email addresses
+    recipient_emails = ["recipient1@example.com", "recipient2@example.com"]
+    
+    # Initialize the SES client
+    ses_client = boto3.client("ses", region_name="us-east-1")
+    
+    # Retrieve CloudTrail event history
+    cloudtrail_client = boto3.client("cloudtrail")
+    response = cloudtrail_client.lookup_events(
+        LookupAttributes=[
+            {
+                "AttributeKey": "EventName",
+                "AttributeValue": "CreateFunction"
+            }
+        ]
+    )
+    events = response["Events"]
+    
+    report = ""
+    
+    # Extract relevant information from the event history
+    for event in events:
+        event_name = event["EventName"]
+        resource_name = event["Resources"][0]["ResourceName"]
+        function_name = event["Resources"][0]["ResourceName"].split(":function:")[1]
+        
+        # Extract the creator and role information from the event response
+        creator = event["Username"]
+        role_arn = event["CloudTrailEvent"]["requestParameters"]["role"]
+        
+        report += f"Function Name: {function_name}\n"
+        report += f"Creator: {creator}\n"
+        report += f"Role ARN: {role_arn}\n"
+        report += "-------------------------------------------------\n"
+    
+    # Send the report via email
+    subject = "Lambda Function Creation Report"
+    body = f"Lambda Function Creation Report:\n\n{report}"
+    
     try:
         response = ses_client.send_email(
             Source=sender_email,
             Destination={
-                'ToAddresses': [recipient_email]
+                "ToAddresses": recipient_emails
             },
             Message={
-                'Subject': {
-                    'Data': subject
-                },
-                'Body': {
-                    'Text': {
-                        'Data': body
-                    }
-                }
+                "Subject": {"Data": subject},
+                "Body": {"Text": {"Data": body}}
             }
         )
-        print("Email sent successfully!")
-    except ClientError as e:
-        print("Email sending failed: ", e.response['Error']['Message'])
-
-def lambda_handler(event, context):
-    function_report = ''
-
-    try:
-        response = cloudtrail_client.lookup_events(
-            LookupAttributes=[
-                {'AttributeKey': 'ResourceType', 'AttributeValue': 'AWS::Lambda::Function'}
-            ],
-            MaxResults=50,  # Adjust the value based on your needs
-            StartTime=(datetime.now() - timedelta(days=1)).isoformat(),
-            EndTime=datetime.now().isoformat()
-        )
-
-        for event in response['Events']:
-            resources = event.get('Resources', [])
-
-            for resource in resources:
-                resource_name = resource.get('ResourceName', '')
-                event_name = event.get('EventName', '')
-                function_name = resource_name.split(':')[-1]
-                attached_role = event.get('UserIdentity', {}).get('SessionContext', {}).get('SessionIssuer', {}).get('Arn', '')
-                tags = resource.get('Tags', [])
-
-                report_line = f"Resource Name: {resource_name}\n" \
-                              f"Event Name: {event_name}\n" \
-                              f"Function Name: {function_name}\n" \
-                              f"Attached IAM Role: {attached_role}\n" \
-                              f"Tags: {tags}\n\n"
-
-                function_report += report_line
-
-        if function_report:
-            send_email(subject, function_report)
-        else:
-            print("No Lambda function event history found.")
-
+        print("Email sent successfully.")
     except Exception as e:
-        print("Error: ", e)
+        print(f"Error sending email: {e}")
