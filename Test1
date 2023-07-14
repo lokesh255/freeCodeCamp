@@ -1,51 +1,54 @@
 import boto3
-import os
 import json
+import datetime
 
-def lambda_handler(event, context):
-    lambda_client = boto3.client('lambda')
-    sts_client = boto3.client('sts')
-    ses_client = boto3.client('ses')
-    
-    # Get the current Lambda function's ARN
-    function_arn = context.invoked_function_arn
-    
-    # Extract the function name from the ARN
-    function_name = function_arn.split(':')[-1]
-    
-    # Get the IAM role ARN that created the Lambda function
-    response = lambda_client.get_function(FunctionName=function_name)
-    role_arn = response['Configuration']['Role']
-    
-    # Check if the Lambda function has tags
-    tags = response['Tags']
-    has_tags = bool(tags)
-    
-    # Get the AWS account ID of the function creator
-    account_id = sts_client.get_caller_identity()['Account']
-    
-    # Compose the email message
-    subject = f"Lambda Function Report - {function_name}"
-    body = f"Lambda function: {function_name}\n\n"
-    body += f"Created by IAM Role ARN: {role_arn}\n\n"
-    body += f"Tags present: {'Yes' if has_tags else 'No'}\n\n"
-    body += f"AWS Account ID: {account_id}"
-    
-    # Set the sender and recipient email addresses
-    sender = os.environ['SENDER_EMAIL']
-    recipient = os.environ['RECIPIENT_EMAIL']
-    
-    # Send the email using SES
-    ses_client.send_email(
-        Source=sender,
-        Destination={'ToAddresses': [recipient]},
-        Message={
-            'Subject': {'Data': subject},
-            'Body': {'Text': {'Data': body}}
-        }
-    )
+def get_assume_role_details(user_arn):
+    iam_client = boto3.client("iam")
+    response = iam_client.list_role_tags(RoleName=user_arn)
+    tags = response["Tags"]
+    role_name = user_arn.split("/")[-1]
     
     return {
-        'statusCode': 200,
-        'body': 'Email sent successfully'
+        "RoleName": role_name,
+        "Tags": tags
+    }
+
+def lambda_handler(event, context):
+    # Initialize AWS clients
+    cloudtrail_client = boto3.client("cloudtrail")
+    
+    # Retrieve Lambda function creation events from CloudTrail
+    response = cloudtrail_client.lookup_events(
+        LookupAttributes=[
+            {
+                "AttributeKey": "EventName",
+                "AttributeValue": "CreateFunction"
+            }
+        ],
+        StartTime=datetime.datetime.now() - datetime.timedelta(days=7)  # Adjust the time range as per your requirements
+    )
+    
+    # Process CloudTrail events and generate report
+    report = []
+    
+    for event in response["Events"]:
+        # Extract relevant details from the CloudTrail event
+        user_arn = event["Username"]
+        
+        # Get AssumeRole details for the user who created the Lambda function
+        assume_role_details = get_assume_role_details(user_arn)
+        
+        # Append details to the report
+        report.append({
+            "LambdaFunctionName": event["Resources"][0]["ResourceName"],
+            "RoleName": assume_role_details["RoleName"],
+            "Tags": assume_role_details["Tags"]
+        })
+    
+    # Print the report
+    print(json.dumps(report, indent=4))
+    
+    return {
+        "statusCode": 200,
+        "body": json.dumps(report)
     }
