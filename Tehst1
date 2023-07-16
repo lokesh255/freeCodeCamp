@@ -25,28 +25,20 @@ def send_email(subject, body):
 
 
 def lambda_handler(event, context):
-    # Initialize the AWS clients
-    cloudtrail_client = boto3.client('cloudtrail')
-    s3_client = boto3.client('s3')
-
-    # Retrieve the S3 bucket creation events from CloudTrail
-    response = cloudtrail_client.lookup_events(
-        LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'}]
-    )
-
     # Prepare the email body
     body = 'S3 Bucket Creation Report:\n\n'
 
-    for event in response['Events']:
-        event_name = event['EventName']
+    for record in event['Records']:
+        event_name = record['eventName']
         if event_name == 'CreateBucket':
-            username = event['Username']
-            assume_role_arn = event['UserIdentity']['SessionContext']['SessionIssuer']['Arn']
-            bucket_name = event['Resources'][0]['ResourceName']
+            username = record['userIdentity']['principalId'].split(':')[1]
+            assume_role_arn = record['userIdentity']['sessionContext']['sessionIssuer']['arn']
+            bucket_name = record['requestParameters']['bucketName']
         else:
             continue
 
         # Check if S3 bucket has tags
+        s3_client = boto3.client('s3')
         try:
             response = s3_client.get_bucket_tagging(Bucket=bucket_name)
             has_tags = 'TagSet' in response
