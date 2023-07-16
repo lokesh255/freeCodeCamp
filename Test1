@@ -3,14 +3,42 @@ import datetime
 
 from botocore.exceptions import ClientError
 
+def get_account_creation_time():
+    # Retrieve the AWS account creation time
+    sts_client = boto3.client('sts')
+    account_id = sts_client.get_caller_identity().get('Account')
+    
+    cloudtrail_client = boto3.client('cloudtrail')
+    response = cloudtrail_client.lookup_events(
+        LookupAttributes=[
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateAccount'},
+            {'AttributeKey': 'ReadOnly', 'AttributeValue': 'true'}
+        ],
+        StartTime=datetime.datetime(2006, 3, 1)  # CloudTrail service launch date
+    )
+    
+    events = response['Events']
+    for event in events:
+        if event['EventName'] == 'CreateAccount':
+            return event['EventTime']
+    
+    # If no 'CreateAccount' event is found, use the account creation time from the IAM user details
+    iam_client = boto3.client('iam')
+    response = iam_client.get_user()
+    user_creation_time = response['User']['CreateDate']
+    return user_creation_time
+
 def lambda_handler(event, context):
     # Configure AWS services
     ses_client = boto3.client('ses')
     cloudtrail_client = boto3.client('cloudtrail')
     
+    # Get the account creation time
+    account_creation_time = get_account_creation_time()
+    
     # Set the start and end time for the CloudTrail event history query
     end_time = datetime.datetime.utcnow()
-    start_time = end_time - datetime.timedelta(days=7)  # Adjust the number of days as needed
+    start_time = account_creation_time
     
     # Retrieve CloudTrail events for Lambda service
     response = cloudtrail_client.lookup_events(
@@ -45,7 +73,7 @@ def lambda_handler(event, context):
         response = cloudtrail_client.lookup_events(
             LookupAttributes=[
                 {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
-                {'AttributeKey': 'Resources', 'AttributeValue': f'arn:aws:lambda:*:123456789012:function:{function_name}'},
+                {'AttributeKey': 'Resources', 'AttributeValue': f'arn:aws:lambda:*:*:function:{function_name}'},
                 {'AttributeKey': 'EventSource', 'AttributeValue': 'lambda.amazonaws.com'},
             ],
             StartTime=start_time,
@@ -65,7 +93,7 @@ def lambda_handler(event, context):
                     created_lambda['AssumedRoleArn'] = assumed_role_arn
     
     # Generate the report
-    report = 'Lambda functions created in the past week:\n\n'
+    report = 'Lambda functions created since account creation:\n\n'
     
     for created_lambda in created_lambdas:
         function_name = created_lambda['FunctionName']
