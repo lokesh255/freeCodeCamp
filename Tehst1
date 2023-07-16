@@ -1,66 +1,70 @@
 import boto3
 
-from botocore.exceptions import ClientError
+def send_email(subject, body):
+    ses_client = boto3.client('ses', region_name='us-west-2')  # Replace with your desired AWS region
 
-def get_assumed_role_arn(event):
-    user_identity = event.get('userIdentity')
-    if user_identity:
-        session_context = user_identity.get('sessionContext')
-        if session_context:
-            session_issuer = session_context.get('sessionIssuer')
-            if session_issuer:
-                return session_issuer.get('arn')
-    return 'Unknown'
+    # Replace with your email addresses
+    sender_email = 'sender@example.com'
+    recipient_email = 'recipient@example.com'
+
+    # Create the email message
+    email_message = {
+        'Subject': {'Data': subject},
+        'Body': {'Text': {'Data': body}},
+    }
+
+    # Send the email
+    response = ses_client.send_email(
+        Source=sender_email,
+        Destination={'ToAddresses': [recipient_email]},
+        Message=email_message
+    )
+
+    print('Email sent successfully')
+    print('Message ID:', response['MessageId'])
+
 
 def lambda_handler(event, context):
-    # Configure AWS services
-    ses_client = boto3.client('ses')
+    # Initialize the AWS clients
     cloudtrail_client = boto3.client('cloudtrail')
+    ecs_client = boto3.client('ecs')
 
-    # Retrieve CloudTrail events for Lambda service and CreateFunction event name
+    # Retrieve the ECS service creation events from CloudTrail
     response = cloudtrail_client.lookup_events(
         LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
-            {'AttributeKey': 'EventSource', 'AttributeValue': 'lambda.amazonaws.com'}
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateService'},
+            {'AttributeKey': 'EventName', 'AttributeValue': 'RunTask'},  # Additional event type for ECS
         ]
     )
 
-    # Process CloudTrail events
-    log_events = response['Events']
-    created_lambdas = []
+    # Prepare the email body
+    body = 'ECS Service Creation Report:\n\n'
 
-    for event in log_events:
-        # Extract information about the created Lambda function
-        function_name = event.get('eventName')
-        assumed_role_arn = get_assumed_role_arn(event)
+    for event in response['Events']:
+        event_name = event['EventName']
+        if event_name == 'CreateService':
+            username = event['Username']
+            assume_role_arn = event['Resources'][0]['ARN']
+            ecs_name = event['Resources'][0]['ResourceName']
+        elif event_name == 'RunTask':  # Additional event type for ECS
+            username = event['Username']
+            assume_role_arn = event['Resources'][0]['containerInstanceArn']
+            ecs_name = event['Resources'][0]['containers'][0]['name']
+        else:
+            continue
 
-        if function_name:
-            created_lambdas.append({'FunctionName': function_name, 'AssumedRoleArn': assumed_role_arn})
-
-    # Generate the report
-    report = 'Lambda Function Creation Report:\n\n'
-    for created_lambda in created_lambdas:
-        function_name = created_lambda['FunctionName']
-        assumed_role_arn = created_lambda['AssumedRoleArn']
-
-        report += f'Function Name: {function_name}\n'
-        report += f'Assumed Role ARN: {assumed_role_arn}\n\n'
-
-    # Send the report via email
-    sender_email = 'sender@example.com'  # Replace with the sender email address
-    recipient_email = 'recipient@example.com'  # Replace with the recipient email address
-    subject = 'Lambda Function Creation Report'
-    body = report
-
-    try:
-        response = ses_client.send_email(
-            Source=sender_email,
-            Destination={'ToAddresses': [recipient_email]},
-            Message={
-                'Subject': {'Data': subject},
-                'Body': {'Text': {'Data': body}}
-            }
+        # Check if ECS service has tags
+        response = ecs_client.describe_services(
+            cluster='your-cluster-name',
+            services=[ecs_name]
         )
-        print("Email sent successfully!")
-    except ClientError as e:
-        print(f"Failed to send email: {e.response['Error']['Message']}")
+        has_tags = 'tags' in response['services'][0]
+
+        body += f'ECS Service: {ecs_name}\n'
+        body += f'Created By: {username}\n'
+        body += f'Assumed Role: {assume_role_arn}\n'
+        body += f'Has Tags: {has_tags}\n\n'
+
+    # Send the email
+    subject = 'ECS Service Creation Report'
+    send_email(subject, body)
