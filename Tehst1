@@ -1,4 +1,5 @@
 import boto3
+from datetime import datetime, timedelta
 
 def send_email(subject, body):
     ses_client = boto3.client('ses', region_name='us-west-2')  # Replace with your desired AWS region
@@ -28,20 +29,26 @@ def lambda_handler(event, context):
     # Prepare the email body
     body = 'S3 Bucket Creation Report:\n\n'
 
-    for record in event.get('Records', []):
-        event_name = record.get('eventName', '')
-        if event_name == 'CreateBucket':
-            user_identity = record.get('userIdentity', {})
-            username = user_identity.get('userName', '')
-            assume_role_arn = user_identity.get('sessionContext', {}).get('sessionIssuer', {}).get('arn', '')
-            region = record.get('awsRegion', '')
-            bucket_name = record.get('requestParameters', {}).get('bucketName', '')
+    # Calculate the date 6 months ago from the current date
+    six_months_ago = datetime.now() - timedelta(days=180)
 
-            body += f'Event Name: {event_name}\n'
-            body += f'Username: {username}\n'
-            body += f'Assumed Role: {assume_role_arn}\n'
-            body += f'Region: {region}\n'
-            body += f'S3 Bucket: {bucket_name}\n\n'
+    for record in event.get('Records', []):
+        event_time = record.get('eventTime', '')
+        if event_time:
+            event_timestamp = datetime.strptime(event_time, '%Y-%m-%dT%H:%M:%SZ')
+            # Filter records for the past 6 months
+            if event_timestamp >= six_months_ago:
+                user_identity = record.get('userIdentity', {})
+                username = user_identity.get('userName', '')
+                assume_role_arn = user_identity.get('sessionContext', {}).get('sessionIssuer', {}).get('arn', '')
+                region = record.get('awsRegion', '')
+                event_name = record.get('eventName', '')
+
+                body += f'Event Name: {event_name}\n'
+                body += f'Username: {username}\n'
+                body += f'Assumed Role: {assume_role_arn}\n'
+                body += f'Region: {region}\n'
+                body += '---\n'
 
     # Send the email
     subject = 'S3 Bucket Creation Report'
