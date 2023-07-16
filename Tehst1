@@ -1,55 +1,48 @@
 import boto3
 
-def get_event_data():
-    # Retrieve the user, assumed role, and S3 bucket name from CloudTrail event history
-    events = []
-    client = boto3.client('cloudtrail')
-    
-    response = client.lookup_events(LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'}])
-    events += response['Events']
-    
-    while 'NextToken' in response:
-        response = client.lookup_events(LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'}],
-                                        NextToken=response['NextToken'])
-        events += response['Events']
-    
-    for event in events:
-        user_identity = event['Username']
-        assumed_role = event['UserIdentity']['SessionContext']['SessionIssuer']['Arn']
-        s3_name = event['RequestParameters']['bucketName']
-        
-        yield user_identity, assumed_role, s3_name
+def send_email(subject, body):
+    ses_client = boto3.client('ses', region_name='us-west-2')  # Replace with your desired AWS region
 
-def send_email(sender, recipient, subject, body):
-    # Send an email using Amazon SES
-    ses_client = boto3.client('ses')
-    ses_client.send_email(
-        Source=sender,
-        Destination={
-            'ToAddresses': [recipient]
-        },
-        Message={
-            'Subject': {
-                'Data': subject
-            },
-            'Body': {
-                'Text': {
-                    'Data': body
-                }
-            }
-        }
+    # Replace with your email addresses
+    sender_email = 'sender@example.com'
+    recipient_email = 'recipient@example.com'
+
+    # Create the email message
+    email_message = {
+        'Subject': {'Data': subject},
+        'Body': {'Text': {'Data': body}},
+    }
+
+    # Send the email
+    response = ses_client.send_email(
+        Source=sender_email,
+        Destination={'ToAddresses': [recipient_email]},
+        Message=email_message
     )
 
-def lambda_handler(event, context):
-    report = "S3 Bucket Creation Report:\n\n"
-    
-    for user, assumed_role, s3_name in get_event_data():
-        report += f"User: {user}\nAssumed Role: {assumed_role}\nS3 Bucket Name: {s3_name}\n\n"
+    print('Email sent successfully')
+    print('Message ID:', response['MessageId'])
 
-    if len(report) > len("S3 Bucket Creation Report:\n\n"):
-        # Replace the below placeholders with your own email details
-        sender = "your_email@example.com"
-        recipient = "recipient_email@example.com"
-        subject = "S3 Bucket Creation Report"
-        
-        send_email(sender, recipient, subject, report)
+
+def lambda_handler(event, context):
+    # Prepare the email body
+    body = 'S3 Bucket Creation Report:\n\n'
+
+    for record in event['Records']:
+        event_name = record['eventName']
+        if event_name == 'CreateBucket':
+            user_identity = record.get('userIdentity', {})
+            username = user_identity.get('userName', '')
+            assume_role_arn = user_identity.get('sessionContext', {}).get('sessionIssuer', {}).get('arn', '')
+            region = record['awsRegion']
+            bucket_name = record['requestParameters'].get('bucketName', '')
+
+            body += f'Event Name: {event_name}\n'
+            body += f'Username: {username}\n'
+            body += f'Assumed Role: {assume_role_arn}\n'
+            body += f'Region: {region}\n'
+            body += f'S3 Bucket: {bucket_name}\n\n'
+
+    # Send the email
+    subject = 'S3 Bucket Creation Report'
+    send_email(subject, body)
