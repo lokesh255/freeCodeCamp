@@ -28,14 +28,14 @@ def lambda_handler(event, context):
     # Prepare the email body
     body = 'S3 Bucket Creation Report:\n\n'
 
-    for record in event['Records']:
-        event_name = record['eventName']
+    for record in event.get('Records', []):
+        event_name = record.get('eventName', '')
         if event_name == 'CreateBucket':
             user_identity = record.get('userIdentity', {})
             username = user_identity.get('userName', '')
             assume_role_arn = user_identity.get('sessionContext', {}).get('sessionIssuer', {}).get('arn', '')
-            region = record['awsRegion']
-            bucket_name = record['requestParameters'].get('bucketName', '')
+            region = record.get('awsRegion', '')
+            bucket_name = record.get('requestParameters', {}).get('bucketName', '')
 
             body += f'Event Name: {event_name}\n'
             body += f'Username: {username}\n'
