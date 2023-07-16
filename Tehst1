@@ -1,5 +1,4 @@
 import boto3
-import datetime
 
 from botocore.exceptions import ClientError
 
@@ -8,18 +7,12 @@ def lambda_handler(event, context):
     ses_client = boto3.client('ses')
     cloudtrail_client = boto3.client('cloudtrail')
 
-    # Set the start and end time for the CloudTrail event history query
-    end_time = datetime.datetime.utcnow()
-    start_time = end_time - datetime.timedelta(days=365)  # Retrieve events for the past 365 days
-
     # Retrieve CloudTrail events for Lambda service
     response = cloudtrail_client.lookup_events(
         LookupAttributes=[
             {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
             {'AttributeKey': 'EventSource', 'AttributeValue': 'lambda.amazonaws.com'},
-        ],
-        StartTime=start_time,
-        EndTime=end_time
+        ]
     )
 
     # Process CloudTrail events
@@ -37,39 +30,17 @@ def lambda_handler(event, context):
             if resource_name.startswith('arn:aws:lambda:'):
                 # Extract the created Lambda function name
                 function_name = resource_name.split(':function:')[-1]
-                created_lambdas.append({'FunctionName': function_name})
-
-    # Retrieve the assumed role ARN for users who created the Lambda functions
-    for created_lambda in created_lambdas:
-        function_name = created_lambda['FunctionName']
-        response = cloudtrail_client.lookup_events(
-            LookupAttributes=[
-                {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
-                {'AttributeKey': 'Resources', 'AttributeValue': f'arn:aws:lambda:*:*:function:{function_name}'},
-                {'AttributeKey': 'EventSource', 'AttributeValue': 'lambda.amazonaws.com'},
-            ],
-            StartTime=start_time,
-            EndTime=end_time
-        )
-
-        # Process CreateFunction events
-        create_function_events = response['Events']
-
-        for event in create_function_events:
-            if event['EventName'] == 'CreateFunction':
                 user_identity = event['UserIdentity']
+                assumed_role_arn = user_identity.get('SessionContext', {}).get('SessionIssuer', {}).get('Arn')
 
-                # Check if the user identity has assumed a role
-                if 'arn:aws:sts::' in user_identity['Arn']:
-                    assumed_role_arn = user_identity['Arn']
-                    created_lambda['AssumedRoleArn'] = assumed_role_arn
+                created_lambdas.append({'FunctionName': function_name, 'AssumedRoleArn': assumed_role_arn})
 
     # Generate the report
-    report = 'Lambda functions created in the past 365 days:\n\n'
-
+    report = 'Lambda Creation Report:\n\n'
     for created_lambda in created_lambdas:
         function_name = created_lambda['FunctionName']
-        assumed_role_arn = created_lambda.get('AssumedRoleArn', 'Unknown')
+        assumed_role_arn = created_lambda['AssumedRoleArn']
+
         report += f'Function Name: {function_name}\n'
         report += f'Assumed Role ARN: {assumed_role_arn}\n\n'
 
