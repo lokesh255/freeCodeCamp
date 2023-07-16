@@ -2,53 +2,53 @@ import boto3
 
 from botocore.exceptions import ClientError
 
+def get_user_identity(event):
+    user_identity = event.get('UserIdentity')
+    if user_identity:
+        return user_identity.get('SessionContext', {}).get('SessionIssuer', {}).get('Arn')
+    else:
+        return 'Unknown'
+
 def lambda_handler(event, context):
     # Configure AWS services
     ses_client = boto3.client('ses')
     cloudtrail_client = boto3.client('cloudtrail')
 
-    # Retrieve CloudTrail events for S3 service
+    # Retrieve CloudTrail events for all "Create" event names
     response = cloudtrail_client.lookup_events(
         LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'},
-            {'AttributeKey': 'EventSource', 'AttributeValue': 's3.amazonaws.com'},
+            {'AttributeKey': 'EventName', 'AttributeValue': 'Create*'}
         ]
     )
 
     # Process CloudTrail events
     log_events = response['Events']
-    created_buckets = []
+    created_services = []
 
     for event in log_events:
-        # Extract information about created S3 buckets
-        resources = event['Resources']
+        # Extract information about the created service
+        event_name = event.get('EventName', 'Unknown')
+        event_source = event.get('EventSource', 'Unknown')
+        service_name = event_source.split('.')[0]
+        assumed_role_arn = get_user_identity(event)
 
-        for resource in resources:
-            resource_type = resource['ResourceType']
-            resource_name = resource['ResourceName']
-
-            # Check if the resource is an S3 bucket
-            if resource_type == 'AWS::S3::Bucket':
-                # Extract the created bucket name
-                bucket_name = resource_name.split(':::')[-1]
-                user_identity = event['UserIdentity']
-                assumed_role_arn = user_identity.get('SessionContext', {}).get('SessionIssuer', {}).get('Arn')
-
-                created_buckets.append({'BucketName': bucket_name, 'AssumedRoleArn': assumed_role_arn})
+        created_services.append({'ServiceName': service_name, 'EventName': event_name, 'AssumedRoleArn': assumed_role_arn})
 
     # Generate the report
-    report = 'S3 Bucket Creation Report:\n\n'
-    for created_bucket in created_buckets:
-        bucket_name = created_bucket['BucketName']
-        assumed_role_arn = created_bucket['AssumedRoleArn']
+    report = 'Service Creation Report:\n\n'
+    for created_service in created_services:
+        service_name = created_service['ServiceName']
+        event_name = created_service['EventName']
+        assumed_role_arn = created_service['AssumedRoleArn']
 
-        report += f'Bucket Name: {bucket_name}\n'
+        report += f'Service Name: {service_name}\n'
+        report += f'Event Name: {event_name}\n'
         report += f'Assumed Role ARN: {assumed_role_arn}\n\n'
 
     # Send the report via email
     sender_email = 'sender@example.com'  # Replace with the sender email address
     recipient_email = 'recipient@example.com'  # Replace with the recipient email address
-    subject = 'S3 Bucket Creation Report'
+    subject = 'Service Creation Report'
     body = report
 
     try:
