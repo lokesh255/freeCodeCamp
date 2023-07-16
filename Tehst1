@@ -3,43 +3,15 @@ import datetime
 
 from botocore.exceptions import ClientError
 
-def get_account_creation_time():
-    # Retrieve the AWS account creation time
-    sts_client = boto3.client('sts')
-    account_id = sts_client.get_caller_identity().get('Account')
-    
-    cloudtrail_client = boto3.client('cloudtrail')
-    response = cloudtrail_client.lookup_events(
-        LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateAccount'},
-            {'AttributeKey': 'ReadOnly', 'AttributeValue': 'true'}
-        ],
-        StartTime=datetime.datetime(2006, 3, 1)  # CloudTrail service launch date
-    )
-    
-    events = response['Events']
-    for event in events:
-        if event['EventName'] == 'CreateAccount':
-            return event['EventTime']
-    
-    # If no 'CreateAccount' event is found, use the account creation time from the IAM user details
-    iam_client = boto3.client('iam')
-    response = iam_client.get_user()
-    user_creation_time = response['User']['CreateDate']
-    return user_creation_time
-
 def lambda_handler(event, context):
     # Configure AWS services
     ses_client = boto3.client('ses')
     cloudtrail_client = boto3.client('cloudtrail')
-    
-    # Get the account creation time
-    account_creation_time = get_account_creation_time()
-    
+
     # Set the start and end time for the CloudTrail event history query
     end_time = datetime.datetime.utcnow()
-    start_time = account_creation_time
-    
+    start_time = end_time - datetime.timedelta(days=365)  # Retrieve events for the past 365 days
+
     # Retrieve CloudTrail events for Lambda service
     response = cloudtrail_client.lookup_events(
         LookupAttributes=[
@@ -49,24 +21,24 @@ def lambda_handler(event, context):
         StartTime=start_time,
         EndTime=end_time
     )
-    
+
     # Process CloudTrail events
     log_events = response['Events']
     created_lambdas = []
-    
+
     for event in log_events:
         # Extract information about created Lambda functions
         resources = event['Resources']
-        
+
         for resource in resources:
             resource_name = resource['ResourceName']
-            
+
             # Check if the resource is a Lambda function
             if resource_name.startswith('arn:aws:lambda:'):
                 # Extract the created Lambda function name
                 function_name = resource_name.split(':function:')[-1]
                 created_lambdas.append({'FunctionName': function_name})
-    
+
     # Retrieve the assumed role ARN for users who created the Lambda functions
     for created_lambda in created_lambdas:
         function_name = created_lambda['FunctionName']
@@ -79,34 +51,34 @@ def lambda_handler(event, context):
             StartTime=start_time,
             EndTime=end_time
         )
-        
+
         # Process CreateFunction events
         create_function_events = response['Events']
-        
+
         for event in create_function_events:
             if event['EventName'] == 'CreateFunction':
                 user_identity = event['UserIdentity']
-                
+
                 # Check if the user identity has assumed a role
                 if 'arn:aws:sts::' in user_identity['Arn']:
                     assumed_role_arn = user_identity['Arn']
                     created_lambda['AssumedRoleArn'] = assumed_role_arn
-    
+
     # Generate the report
-    report = 'Lambda functions created since account creation:\n\n'
-    
+    report = 'Lambda functions created in the past 365 days:\n\n'
+
     for created_lambda in created_lambdas:
         function_name = created_lambda['FunctionName']
         assumed_role_arn = created_lambda.get('AssumedRoleArn', 'Unknown')
         report += f'Function Name: {function_name}\n'
         report += f'Assumed Role ARN: {assumed_role_arn}\n\n'
-    
+
     # Send the report via email
     sender_email = 'sender@example.com'  # Replace with the sender email address
     recipient_email = 'recipient@example.com'  # Replace with the recipient email address
     subject = 'Lambda Creation Report'
     body = report
-    
+
     try:
         response = ses_client.send_email(
             Source=sender_email,
