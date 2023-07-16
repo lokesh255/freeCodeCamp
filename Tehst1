@@ -2,53 +2,54 @@ import boto3
 
 from botocore.exceptions import ClientError
 
-def get_user_identity(event):
-    user_identity = event.get('UserIdentity')
+def get_assumed_role_arn(event):
+    user_identity = event.get('userIdentity')
     if user_identity:
-        return user_identity.get('SessionContext', {}).get('SessionIssuer', {}).get('Arn')
-    else:
-        return 'Unknown'
+        session_context = user_identity.get('sessionContext')
+        if session_context:
+            session_issuer = session_context.get('sessionIssuer')
+            if session_issuer:
+                return session_issuer.get('arn')
+    return 'Unknown'
 
 def lambda_handler(event, context):
     # Configure AWS services
     ses_client = boto3.client('ses')
     cloudtrail_client = boto3.client('cloudtrail')
 
-    # Retrieve CloudTrail events for all "Create" event names
+    # Retrieve CloudTrail events for Lambda service and CreateFunction event name
     response = cloudtrail_client.lookup_events(
         LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'Create*'}
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
+            {'AttributeKey': 'EventSource', 'AttributeValue': 'lambda.amazonaws.com'}
         ]
     )
 
     # Process CloudTrail events
     log_events = response['Events']
-    created_services = []
+    created_lambdas = []
 
     for event in log_events:
-        # Extract information about the created service
-        event_name = event.get('EventName', 'Unknown')
-        event_source = event.get('EventSource', 'Unknown')
-        service_name = event_source.split('.')[0]
-        assumed_role_arn = get_user_identity(event)
+        # Extract information about the created Lambda function
+        function_name = event.get('eventName')
+        assumed_role_arn = get_assumed_role_arn(event)
 
-        created_services.append({'ServiceName': service_name, 'EventName': event_name, 'AssumedRoleArn': assumed_role_arn})
+        if function_name:
+            created_lambdas.append({'FunctionName': function_name, 'AssumedRoleArn': assumed_role_arn})
 
     # Generate the report
-    report = 'Service Creation Report:\n\n'
-    for created_service in created_services:
-        service_name = created_service['ServiceName']
-        event_name = created_service['EventName']
-        assumed_role_arn = created_service['AssumedRoleArn']
+    report = 'Lambda Function Creation Report:\n\n'
+    for created_lambda in created_lambdas:
+        function_name = created_lambda['FunctionName']
+        assumed_role_arn = created_lambda['AssumedRoleArn']
 
-        report += f'Service Name: {service_name}\n'
-        report += f'Event Name: {event_name}\n'
+        report += f'Function Name: {function_name}\n'
         report += f'Assumed Role ARN: {assumed_role_arn}\n\n'
 
     # Send the report via email
     sender_email = 'sender@example.com'  # Replace with the sender email address
     recipient_email = 'recipient@example.com'  # Replace with the recipient email address
-    subject = 'Service Creation Report'
+    subject = 'Lambda Function Creation Report'
     body = report
 
     try:
