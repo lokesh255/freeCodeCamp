@@ -1,54 +1,97 @@
 import boto3
-import json
 import datetime
+import json
+import os
+import re
 
-def get_assume_role_details(user_arn):
-    iam_client = boto3.client("iam")
-    response = iam_client.list_role_tags(RoleName=user_arn)
-    tags = response["Tags"]
-    role_name = user_arn.split("/")[-1]
-    
-    return {
-        "RoleName": role_name,
-        "Tags": tags
-    }
+from botocore.exceptions import ClientError
 
 def lambda_handler(event, context):
-    # Initialize AWS clients
-    cloudtrail_client = boto3.client("cloudtrail")
+    # Configure AWS services
+    ses_client = boto3.client('ses')
+    cloudtrail_client = boto3.client('cloudtrail')
     
-    # Retrieve Lambda function creation events from CloudTrail
+    # Set the start and end time for the CloudTrail event history query
+    end_time = datetime.datetime.utcnow()
+    start_time = end_time - datetime.timedelta(days=7)  # Adjust the number of days as needed
+    
+    # Retrieve CloudTrail events for Lambda service
     response = cloudtrail_client.lookup_events(
         LookupAttributes=[
-            {
-                "AttributeKey": "EventName",
-                "AttributeValue": "CreateFunction"
-            }
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
         ],
-        StartTime=datetime.datetime.now() - datetime.timedelta(days=7)  # Adjust the time range as per your requirements
+        StartTime=start_time,
+        EndTime=end_time
     )
     
-    # Process CloudTrail events and generate report
-    report = []
+    # Process CloudTrail events
+    log_events = response['Events']
+    created_lambdas = []
     
-    for event in response["Events"]:
-        # Extract relevant details from the CloudTrail event
-        user_arn = event["Username"]
+    for event in log_events:
+        # Extract information about created Lambda functions
+        event_name = event['EventName']
+        resources = event['Resources']
+        event_time = event['EventTime']
         
-        # Get AssumeRole details for the user who created the Lambda function
-        assume_role_details = get_assume_role_details(user_arn)
+        for resource in resources:
+            resource_name = resource['ResourceName']
+            
+            # Check if the resource is a Lambda function
+            if resource_name.startswith('arn:aws:lambda:'):
+                # Extract the created Lambda function name
+                match = re.match(r'arn:aws:lambda:[^:]+:[^:]+:function:(.+)', resource_name)
+                if match:
+                    function_name = match.group(1)
+                    created_lambdas.append({'FunctionName': function_name, 'EventTime': event_time})
+    
+    # Retrieve the assumed role ARN for users who created the Lambda functions
+    for created_lambda in created_lambdas:
+        response = cloudtrail_client.lookup_events(
+            LookupAttributes=[
+                {'AttributeKey': 'EventName', 'AttributeValue': 'AssumeRole'},
+                {'AttributeKey': 'Resources', 'AttributeValue': 'arn:aws:iam::*:role/*'},
+                {'AttributeKey': 'Username', 'AttributeValue': '*' + created_lambda['EventTime'].strftime('%Y-%m-%d %H:%M:%S.%f') + '*'},
+            ],
+            StartTime=start_time,
+            EndTime=end_time
+        )
         
-        # Append details to the report
-        report.append({
-            "LambdaFunctionName": event["Resources"][0]["ResourceName"],
-            "RoleName": assume_role_details["RoleName"],
-            "Tags": assume_role_details["Tags"]
-        })
+        # Process AssumeRole events
+        assume_role_events = response['Events']
+        
+        for event in assume_role_events:
+            event_time = event['EventTime']
+            event_user_identity = event['UserIdentity']
+            
+            # Check if the user identity matches the assumed role
+            if 'Arn' in event_user_identity and event_user_identity['Arn'] == created_lambda['EventTime']:
+                created_lambda['AssumedRoleArn'] = event_user_identity['Arn']
     
-    # Print the report
-    print(json.dumps(report, indent=4))
+    # Generate the report
+    report = 'Lambda functions created in the past week:\n\n'
     
-    return {
-        "statusCode": 200,
-        "body": json.dumps(report)
-    }
+    for created_lambda in created_lambdas:
+        function_name = created_lambda['FunctionName']
+        assumed_role_arn = created_lambda.get('AssumedRoleArn', 'Unknown')
+        report += f'Function Name: {function_name}\n'
+        report += f'Assumed Role ARN: {assumed_role_arn}\n\n'
+    
+    # Send the report via email
+    sender_email = os.environ['SENDER_EMAIL']
+    recipient_email = os.environ['RECIPIENT_EMAIL']
+    subject = 'Lambda Creation Report'
+    body = report
+    
+    try:
+        response = ses_client.send_email(
+            Source=sender_email,
+            Destination={'ToAddresses': [recipient_email]},
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Text': {'Data': body}}
+            }
+        )
+        print("Email sent successfully!")
+    except ClientError as e:
+        print(f"Failed to send email: {e.response['Error']['Message']}")
