@@ -7,47 +7,48 @@ def lambda_handler(event, context):
     ses_client = boto3.client('ses')
     cloudtrail_client = boto3.client('cloudtrail')
 
-    # Retrieve CloudTrail events for Lambda service
+    # Retrieve CloudTrail events for S3 service
     response = cloudtrail_client.lookup_events(
         LookupAttributes=[
-            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'},
-            {'AttributeKey': 'EventSource', 'AttributeValue': 'lambda.amazonaws.com'},
+            {'AttributeKey': 'EventName', 'AttributeValue': 'CreateBucket'},
+            {'AttributeKey': 'EventSource', 'AttributeValue': 's3.amazonaws.com'},
         ]
     )
 
     # Process CloudTrail events
     log_events = response['Events']
-    created_lambdas = []
+    created_buckets = []
 
     for event in log_events:
-        # Extract information about created Lambda functions
+        # Extract information about created S3 buckets
         resources = event['Resources']
 
         for resource in resources:
+            resource_type = resource['ResourceType']
             resource_name = resource['ResourceName']
 
-            # Check if the resource is a Lambda function
-            if resource_name.startswith('arn:aws:lambda:'):
-                # Extract the created Lambda function name
-                function_name = resource_name.split(':function:')[-1]
+            # Check if the resource is an S3 bucket
+            if resource_type == 'AWS::S3::Bucket':
+                # Extract the created bucket name
+                bucket_name = resource_name.split(':::')[-1]
                 user_identity = event['UserIdentity']
                 assumed_role_arn = user_identity.get('SessionContext', {}).get('SessionIssuer', {}).get('Arn')
 
-                created_lambdas.append({'FunctionName': function_name, 'AssumedRoleArn': assumed_role_arn})
+                created_buckets.append({'BucketName': bucket_name, 'AssumedRoleArn': assumed_role_arn})
 
     # Generate the report
-    report = 'Lambda Creation Report:\n\n'
-    for created_lambda in created_lambdas:
-        function_name = created_lambda['FunctionName']
-        assumed_role_arn = created_lambda['AssumedRoleArn']
+    report = 'S3 Bucket Creation Report:\n\n'
+    for created_bucket in created_buckets:
+        bucket_name = created_bucket['BucketName']
+        assumed_role_arn = created_bucket['AssumedRoleArn']
 
-        report += f'Function Name: {function_name}\n'
+        report += f'Bucket Name: {bucket_name}\n'
         report += f'Assumed Role ARN: {assumed_role_arn}\n\n'
 
     # Send the report via email
     sender_email = 'sender@example.com'  # Replace with the sender email address
     recipient_email = 'recipient@example.com'  # Replace with the recipient email address
-    subject = 'Lambda Creation Report'
+    subject = 'S3 Bucket Creation Report'
     body = report
 
     try:
