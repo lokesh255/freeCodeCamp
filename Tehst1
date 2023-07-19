@@ -23,9 +23,13 @@ def lambda_handler(event, context):
         )
 
         # Format the events into a table
-        table = "<table border='1'><tr><th>Event Time</th><th>Event Name</th><th>Event Source</th></tr>"
+        table = "<table border='1'><tr><th>Event Name</th><th>Function Name</th><th>User Name</th><th>Assumed Role ARN</th></tr>"
         for event in response['Events']:
-            table += f"<tr><td>{event['EventTime']}</td><td>{event['EventName']}</td><td>{event['EventSource']}</td></tr>"
+            event_name = event['EventName']
+            function_name = event['Resources'][0]['ResourceName']
+            user_name = event.get('Username', 'N/A')
+            assumed_role_arn = event.get('UserIdentity', {}).get('SessionContext', {}).get('SessionIssuer', {}).get('Arn', 'N/A')
+            table += f"<tr><td>{event_name}</td><td>{function_name}</td><td>{user_name}</td><td>{assumed_role_arn}</td></tr>"
         table += "</table>"
 
         # Send the report via email
