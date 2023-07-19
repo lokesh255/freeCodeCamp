@@ -1,55 +1,59 @@
 import boto3
-from datetime import datetime, timedelta
-
-def send_email(subject, body):
-    ses_client = boto3.client('ses', region_name='us-west-2')  # Replace with your desired AWS region
-
-    # Replace with your email addresses
-    sender_email = 'sender@example.com'
-    recipient_email = 'recipient@example.com'
-
-    # Create the email message
-    email_message = {
-        'Subject': {'Data': subject},
-        'Body': {'Text': {'Data': body}},
-    }
-
-    # Send the email
-    response = ses_client.send_email(
-        Source=sender_email,
-        Destination={'ToAddresses': [recipient_email]},
-        Message=email_message
-    )
-
-    print('Email sent successfully')
-    print('Message ID:', response['MessageId'])
-
+from botocore.exceptions import ClientError
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 def lambda_handler(event, context):
-    # Prepare the email body
-    body = 'S3 Bucket Creation Report:\n\n'
+    # Replace these with your specific details
+    region_name = 'us-east-1'
+    trail_name = 'your-cloudtrail-name'
+    sender_email = 'your-sender-email@example.com'
+    recipient_email = 'recipient-email@example.com'
+    aws_account_id = 'your-aws-account-id'
 
-    # Calculate the date 6 months ago from the current date
-    six_months_ago = datetime.now() - timedelta(days=180)
+    # Initialize AWS clients
+    cloudtrail = boto3.client('cloudtrail', region_name=region_name)
+    ses = boto3.client('ses', region_name=region_name)
 
-    for record in event.get('Records', []):
-        event_time = record.get('eventTime', '')
-        if event_time:
-            event_timestamp = datetime.strptime(event_time, '%Y-%m-%dT%H:%M:%SZ')
-            # Filter records for the past 6 months
-            if event_timestamp >= six_months_ago:
-                user_identity = record.get('userIdentity', {})
-                username = user_identity.get('userName', '')
-                assume_role_arn = user_identity.get('sessionContext', {}).get('sessionIssuer', {}).get('arn', '')
-                region = record.get('awsRegion', '')
-                event_name = record.get('eventName', '')
+    try:
+        # Get the latest CloudTrail events
+        response = cloudtrail.lookup_events(
+            LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'}],
+            MaxResults=10  # Adjust this to get the required number of events
+        )
 
-                body += f'Event Name: {event_name}\n'
-                body += f'Username: {username}\n'
-                body += f'Assumed Role: {assume_role_arn}\n'
-                body += f'Region: {region}\n'
-                body += '---\n'
+        # Format the events into a table
+        table = "<table border='1'><tr><th>Event Time</th><th>Event Name</th><th>Event Source</th></tr>"
+        for event in response['Events']:
+            table += f"<tr><td>{event['EventTime']}</td><td>{event['EventName']}</td><td>{event['EventSource']}</td></tr>"
+        table += "</table>"
 
-    # Send the email
-    subject = 'S3 Bucket Creation Report'
-    send_email(subject, body)
+        # Send the report via email
+        subject = "CloudTrail Event Report"
+        body = f"Hello,\n\nBelow is the latest CloudTrail event report for 'CreateFunction' events in AWS Account: {aws_account_id}\n\n{table}"
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = sender_email
+        msg['To'] = recipient_email
+        part = MIMEText(body, 'html')
+        msg.attach(part)
+
+        # Replace this with your verified SES domain or email address
+        response = ses.send_raw_email(
+            Source=sender_email,
+            Destinations=[recipient_email],
+            RawMessage={'Data': msg.as_string()}
+        )
+
+        print(f"Email sent successfully! Message ID: {response['MessageId']}")
+
+        return {
+            'statusCode': 200,
+            'body': 'Email sent successfully!'
+        }
+    except ClientError as e:
+        print(f"Error: {e}")
+        return {
+            'statusCode': 500,
+            'body': 'Error sending email!'
+        }
