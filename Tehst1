@@ -1,63 +1,62 @@
 import boto3
-from botocore.exceptions import ClientError
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+import json
 
-def lambda_handler(event, context):
-    # Replace these with your specific details
-    region_name = 'us-east-1'
-    trail_name = 'your-cloudtrail-name'
-    sender_email = 'your-sender-email@example.com'
-    recipient_email = 'recipient-email@example.com'
-    aws_account_id = 'your-aws-account-id'
+def get_cloudtrail_events(event, context):
+    # Configure your AWS region and SES client
+    region = 'your_aws_region'
+    ses_client = boto3.client('ses', region_name=region)
+    
+    # Specify the event name you want to filter for
+    event_name_filter = 'CreateFunction'
 
-    # Initialize AWS clients
-    cloudtrail = boto3.client('cloudtrail', region_name=region_name)
-    ses = boto3.client('ses', region_name=region_name)
+    # Initialize the CloudTrail client
+    cloudtrail_client = boto3.client('cloudtrail', region_name=region)
 
+    # Use the lookupEvents API to retrieve the events
+    response = cloudtrail_client.lookup_events(
+        LookupAttributes=[
+            {
+                'AttributeKey': 'EventName',
+                'AttributeValue': event_name_filter
+            }
+        ]
+    )
+    
+    # Extract required event details
+    event_details = []
+    for event_data in response['Events']:
+        event_name = event_data['EventName']
+        user_identity = event_data['Username']
+        assume_role_arn = event_data['UserIdentity']['SessionContext']['SessionIssuer']['Arn']
+        event_details.append({'EventName': event_name, 'UserIdentity': user_identity, 'AssumeRoleArn': assume_role_arn})
+
+    # Create a table to format the event details
+    table = "<table border='1'><tr><th>Event Name</th><th>User Name</th><th>Assume Role ARN</th></tr>"
+    for event_detail in event_details:
+        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentity']}</td><td>{event_detail['AssumeRoleArn']}</td></tr>"
+    table += "</table>"
+    
+    # Send email using SES
+    sender_email = 'your_sender_email'
+    recipient_email = 'your_recipient_email'
+    subject = 'CloudTrail Event Report'
+    body = f"CloudTrail events with EventName '{event_name_filter}':\n\n{table}"
+    
     try:
-        # Get the latest CloudTrail events
-        response = cloudtrail.lookup_events(
-            LookupAttributes=[{'AttributeKey': 'EventName', 'AttributeValue': 'CreateFunction'}],
-            MaxResults=10  # Adjust this to get the required number of events
-        )
-
-        # Format the events into a table
-        table = "<table border='1'><tr><th>Event Name</th><th>Function Name</th><th>User Name</th><th>Assumed Role ARN</th></tr>"
-        for event in response['Events']:
-            event_name = event['EventName']
-            function_name = event['Resources'][0]['ResourceName']
-            user_name = event.get('Username', 'N/A')
-            assumed_role_arn = event.get('UserIdentity', {}).get('SessionContext', {}).get('SessionIssuer', {}).get('Arn', 'N/A')
-            table += f"<tr><td>{event_name}</td><td>{function_name}</td><td>{user_name}</td><td>{assumed_role_arn}</td></tr>"
-        table += "</table>"
-
-        # Send the report via email
-        subject = "CloudTrail Event Report"
-        body = f"Hello,\n\nBelow is the latest CloudTrail event report for 'CreateFunction' events in AWS Account: {aws_account_id}\n\n{table}"
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = subject
-        msg['From'] = sender_email
-        msg['To'] = recipient_email
-        part = MIMEText(body, 'html')
-        msg.attach(part)
-
-        # Replace this with your verified SES domain or email address
-        response = ses.send_raw_email(
+        ses_client.send_email(
             Source=sender_email,
-            Destinations=[recipient_email],
-            RawMessage={'Data': msg.as_string()}
+            Destination={'ToAddresses': [recipient_email]},
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Html': {'Data': body}}
+            }
         )
-
-        print(f"Email sent successfully! Message ID: {response['MessageId']}")
-
         return {
             'statusCode': 200,
-            'body': 'Email sent successfully!'
+            'body': json.dumps('Email sent successfully.')
         }
-    except ClientError as e:
-        print(f"Error: {e}")
+    except Exception as e:
         return {
             'statusCode': 500,
-            'body': 'Error sending email!'
+            'body': json.dumps(f'Error sending email: {str(e)}')
         }
