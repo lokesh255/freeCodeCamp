@@ -1,6 +1,4 @@
 import boto3
-import csv
-import io
 
 def lambda_handler(event, context):
     # Configure your AWS region and SES client
@@ -23,28 +21,25 @@ def lambda_handler(event, context):
         ]
     )
     
-    # Extract required event details and store them in a list of dictionaries
-    event_details = []
+    # Extract required event details and store them in a list of strings (rows of the table)
+    table_rows = []
     for event_data in response['Events']:
         event_name = event_data['EventName']
         user_identity_arn = event_data.get('UserIdentity', {}).get('Arn', 'N/A')
         user_name = event_data.get('Username', 'N/A')
         creation_date = event_data['EventTime']
         function_name = event_data['Resources'][0]['ResourceName']
-        event_details.append({'UserIdentityARN': user_identity_arn, 'UserName': user_name, 'CreationDate': creation_date, 'FunctionName': function_name})
+        table_row = f"Event Name: {event_name}, User Identity ARN: {user_identity_arn}, User Name: {user_name}, Creation Date: {creation_date}, Function Name: {function_name}"
+        table_rows.append(table_row)
 
-    # Create a CSV file with the event details
-    csv_file = io.StringIO()
-    csv_writer = csv.DictWriter(csv_file, fieldnames=['UserIdentityARN', 'UserName', 'CreationDate', 'FunctionName'])
-    csv_writer.writeheader()
-    csv_writer.writerows(event_details)
+    # Create the table by joining the rows with newlines
+    table = '\n'.join(table_rows)
     
-    # Send email using SES with the CSV file as an attachment
+    # Send email using SES with the table in the email body
     sender_email = 'your_sender_email'
     recipient_email = 'your_recipient_email'
     subject = 'CloudTrail Event Report'
-    body = 'Please find the CloudTrail event report in the attached CSV file.'
-    attachment_name = 'cloudtrail_events.csv'
+    body = f"CloudTrail events with EventName '{event_name_filter}':\n\n{table}"
     
     try:
         ses_client.send_email(
@@ -53,15 +48,7 @@ def lambda_handler(event, context):
             Message={
                 'Subject': {'Data': subject},
                 'Body': {'Text': {'Data': body}},
-            },
-            # Convert the CSV file to bytes and attach it to the email
-            Attachments=[
-                {
-                    'FileName': attachment_name,
-                    'ContentType': 'text/csv',
-                    'Data': csv_file.getvalue().encode('utf-8')
-                },
-            ]
+            }
         )
         return {
             'statusCode': 200,
