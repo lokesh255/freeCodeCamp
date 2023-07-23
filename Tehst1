@@ -1,6 +1,14 @@
 import boto3
 import json
 
+def get_user_identity_details(user_identity):
+    if 'Type' in user_identity and 'PrincipalId' in user_identity and 'Arn' in user_identity:
+        return f"{user_identity['Type']}, {user_identity['PrincipalId']}, {user_identity['Arn']}"
+    elif 'Type' in user_identity:
+        return f"{user_identity['Type']}, N/A, N/A"
+    else:
+        return "N/A, N/A, N/A"
+
 def lambda_handler(event, context):
     # Configure your AWS region and SES client
     region = 'your_aws_region'
@@ -27,17 +35,15 @@ def lambda_handler(event, context):
     for event_data in response['Events']:
         event_name = event_data['EventName']
         user_identity = event_data.get('UserIdentity', {})
-        user_identity_type = user_identity.get('Type', 'N/A')
-        principal_id = user_identity.get('PrincipalId', 'N/A')
-        arn = user_identity.get('Arn', 'N/A')
+        user_identity_details = get_user_identity_details(user_identity)
         user_name = user_identity.get('UserName', 'N/A')
         function_name = event_data['Resources'][0]['ResourceName']
-        event_details.append({'EventName': event_name, 'UserIdentityType': user_identity_type, 'PrincipalID': principal_id, 'ARN': arn, 'UserName': user_name, 'FunctionName': function_name})
+        event_details.append({'EventName': event_name, 'UserIdentityDetails': user_identity_details, 'UserName': user_name, 'FunctionName': function_name})
 
     # Create a table in HTML format with the event details
-    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>User Name</th><th>Function Name</th></tr>"
+    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type, PrincipalId, ARN</th><th>User Name</th><th>Function Name</th></tr>"
     for event_detail in event_details:
-        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityType']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['ARN']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td></tr>"
+        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityDetails']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td></tr>"
     table += "</table>"
     
     # Send email using SES with the table in the email body
