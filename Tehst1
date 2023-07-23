@@ -1,57 +1,50 @@
 import boto3
 import json
 
-def get_user_identity_details(user_identity):
-    if 'Type' in user_identity and 'PrincipalId' in user_identity and 'Arn' in user_identity:
-        return f"{user_identity['Type']}, {user_identity['PrincipalId']}, {user_identity['Arn']}"
-    elif 'Type' in user_identity:
-        return f"{user_identity['Type']}, N/A, N/A"
-    else:
-        return "N/A, N/A, N/A"
+def get_assume_role_arn(lambda_function_arn):
+    # Get the function details to extract the IAM role ARN
+    lambda_client = boto3.client('lambda')
+    response = lambda_client.get_function(FunctionName=lambda_function_arn)
+    function_role_arn = response['Configuration']['Role']
+
+    # Extract the AssumeRole ARN from the IAM role
+    iam_client = boto3.client('iam')
+    response = iam_client.get_role(RoleName=function_role_arn.split('/')[-1])
+    assume_role_arn = response['Role']['AssumeRolePolicyDocument']['Statement'][0]['Principal']['Service'][5:]
+
+    return assume_role_arn
 
 def lambda_handler(event, context):
     # Configure your AWS region and SES client
     region = 'your_aws_region'
     ses_client = boto3.client('ses', region_name=region)
-    
-    # Specify the event name you want to filter for
-    event_name_filter = 'CreateFunction'
 
-    # Initialize the CloudTrail client
-    cloudtrail_client = boto3.client('cloudtrail', region_name=region)
+    # Initialize the Lambda client
+    lambda_client = boto3.client('lambda', region_name=region)
 
-    # Use the lookup_events API to retrieve the events
-    response = cloudtrail_client.lookup_events(
-        LookupAttributes=[
-            {
-                'AttributeKey': 'EventName',
-                'AttributeValue': event_name_filter
-            }
-        ]
-    )
-    
-    # Extract required event details and store them in a list of dictionaries
-    event_details = []
-    for event_data in response['Events']:
-        event_name = event_data['EventName']
-        user_identity = event_data.get('UserIdentity', {})
-        user_identity_details = get_user_identity_details(user_identity)
-        user_name = user_identity.get('UserName', 'N/A')
-        function_name = event_data['Resources'][0]['ResourceName']
-        event_details.append({'EventName': event_name, 'UserIdentityDetails': user_identity_details, 'UserName': user_name, 'FunctionName': function_name})
+    # List all Lambda functions
+    response = lambda_client.list_functions()
 
-    # Create a table in HTML format with the event details
-    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type, PrincipalId, ARN</th><th>User Name</th><th>Function Name</th></tr>"
-    for event_detail in event_details:
-        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityDetails']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td></tr>"
+    # Extract Lambda function details (FunctionName, IAM Role ARN, AssumeRole ARN)
+    function_details = []
+    for function_data in response['Functions']:
+        function_name = function_data['FunctionName']
+        assume_role_arn = get_assume_role_arn(function_data['FunctionArn'])
+        iam_role_arn = function_data['Role']
+        function_details.append({'FunctionName': function_name, 'AssumeRoleARN': assume_role_arn, 'IAMRoleARN': iam_role_arn})
+
+    # Create a table in HTML format with the function details
+    table = "<table border='1'><tr><th>Function Name</th><th>Assume Role ARN</th><th>IAM Role ARN</th></tr>"
+    for function_detail in function_details:
+        table += f"<tr><td>{function_detail['FunctionName']}</td><td>{function_detail['AssumeRoleARN']}</td><td>{function_detail['IAMRoleARN']}</td></tr>"
     table += "</table>"
-    
+
     # Send email using SES with the table in the email body
     sender_email = 'your_sender_email'
     recipient_email = 'your_recipient_email'
-    subject = 'CloudTrail Event Report'
-    body = f"CloudTrail events with EventName '{event_name_filter}':\n\n{table}"
-    
+    subject = 'Lambda Function and Role Details Report'
+    body = f"Lambda Function and Role Details:\n\n{table}"
+
     try:
         ses_client.send_email(
             Source=sender_email,
