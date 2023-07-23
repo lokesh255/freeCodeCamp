@@ -27,8 +27,8 @@ def lambda_handler(event, context):
     event_details = []
     for event_data in response['Events']:
         event_name = event_data['EventName']
-        user_identity_arn = event_data['UserIdentity']['Arn']
-        user_name = event_data['Username']
+        user_identity_arn = event_data.get('UserIdentity', {}).get('Arn', 'N/A')
+        user_name = event_data.get('Username', 'N/A')
         creation_date = event_data['EventTime']
         function_name = event_data['Resources'][0]['ResourceName']
         event_details.append({'UserIdentityARN': user_identity_arn, 'UserName': user_name, 'CreationDate': creation_date, 'FunctionName': function_name})
