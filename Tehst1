@@ -27,13 +27,15 @@ def lambda_handler(event, context):
     event_details = []
     for event_data in response['Events']:
         event_name = event_data['EventName']
-        user_identity = event_data['Username']
-        assume_role_arn = event_data['UserIdentity']['SessionContext']['SessionIssuer']['Arn']
-        event_details.append({'EventName': event_name, 'UserName': user_identity, 'UserIdentity': assume_role_arn})
+        user_identity_arn = event_data['UserIdentity']['Arn']
+        user_name = event_data['Username']
+        creation_date = event_data['EventTime']
+        function_name = event_data['Resources'][0]['ResourceName']
+        event_details.append({'UserIdentityARN': user_identity_arn, 'UserName': user_name, 'CreationDate': creation_date, 'FunctionName': function_name})
 
     # Create a CSV file with the event details
     csv_file = io.StringIO()
-    csv_writer = csv.DictWriter(csv_file, fieldnames=['EventName', 'UserName', 'UserIdentity'])
+    csv_writer = csv.DictWriter(csv_file, fieldnames=['UserIdentityARN', 'UserName', 'CreationDate', 'FunctionName'])
     csv_writer.writeheader()
     csv_writer.writerows(event_details)
     
@@ -57,7 +59,7 @@ def lambda_handler(event, context):
                 {
                     'FileName': attachment_name,
                     'ContentType': 'text/csv',
-                    'Data': csv_file.getvalue()
+                    'Data': csv_file.getvalue().encode('utf-8')
                 },
             ]
         )
