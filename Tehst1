@@ -1,65 +1,29 @@
-import boto3
-import json
-
-def get_assume_role_arn(lambda_function_arn):
-    # Get the function details to extract the IAM role ARN
-    lambda_client = boto3.client('lambda')
-    response = lambda_client.get_function(FunctionName=lambda_function_arn)
-    function_role_arn = response['Configuration']['Role']
-
-    # Extract the AssumeRole ARN from the IAM role
-    iam_client = boto3.client('iam')
-    response = iam_client.get_role(RoleName=function_role_arn.split('/')[-1])
-    assume_role_arn = response['Role']['AssumeRolePolicyDocument']['Statement'][0]['Principal']['Service'][5:]
-
-    return assume_role_arn
-
-def lambda_handler(event, context):
-    # Configure your AWS region and SES client
-    region = 'your_aws_region'
-    ses_client = boto3.client('ses', region_name=region)
-
-    # Initialize the Lambda client
-    lambda_client = boto3.client('lambda', region_name=region)
-
-    # List all Lambda functions
-    response = lambda_client.list_functions()
-
-    # Extract Lambda function details (FunctionName, IAM Role ARN, AssumeRole ARN)
-    function_details = []
-    for function_data in response['Functions']:
-        function_name = function_data['FunctionName']
-        assume_role_arn = get_assume_role_arn(function_data['FunctionArn'])
-        iam_role_arn = function_data['Role']
-        function_details.append({'FunctionName': function_name, 'AssumeRoleARN': assume_role_arn, 'IAMRoleARN': iam_role_arn})
-
-    # Create a table in HTML format with the function details
-    table = "<table border='1'><tr><th>Function Name</th><th>Assume Role ARN</th><th>IAM Role ARN</th></tr>"
-    for function_detail in function_details:
-        table += f"<tr><td>{function_detail['FunctionName']}</td><td>{function_detail['AssumeRoleARN']}</td><td>{function_detail['IAMRoleARN']}</td></tr>"
-    table += "</table>"
-
-    # Send email using SES with the table in the email body
-    sender_email = 'your_sender_email'
-    recipient_email = 'your_recipient_email'
-    subject = 'Lambda Function and Role Details Report'
-    body = f"Lambda Function and Role Details:\n\n{table}"
-
-    try:
-        ses_client.send_email(
-            Source=sender_email,
-            Destination={'ToAddresses': [recipient_email]},
-            Message={
-                'Subject': {'Data': subject},
-                'Body': {'Html': {'Data': body}},
-            }
+pipeline {
+    agent any
+    
+    parameters {
+        extendedChoice(name: 'CHOICE_PARAMETER', // The name of the parameter
+                       type: 'PT_SINGLE_SELECT', // Type of parameter, PT_SINGLE_SELECT for single select dropdown
+                       description: 'Select an option from the list', // Description shown to the user
+                       visibleItemCount: 5, // Number of options visible at once in the dropdown
+                       multiSelectDelimiter: ',', // Delimiter for multiple choice values
+                       quoteValue: false, // Whether to quote the values
+                       saveJSONParameterToFile: false, // Save the JSON representation of the parameter to a file
+                       groovyScript: [
+                           classpath: [], // Additional classpath entries
+                           script: '''
+                               return ['Option 1', 'Option 2', 'Option 3', 'Option 4']
+                           '''
+                       ]
         )
-        return {
-            'statusCode': 200,
-            'body': json.dumps('Email sent successfully.')
+    }
+    
+    stages {
+        stage('Build') {
+            steps {
+                echo "The chosen option is: ${params.CHOICE_PARAMETER}"
+                // Your build steps go here
+            }
         }
-    except Exception as e:
-        return {
-            'statusCode': 500,
-            'body': json.dumps(f'Error sending email: {str(e)}')
-        }
+    }
+}
