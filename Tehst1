@@ -2,13 +2,10 @@ pipeline {
     agent any
     
     parameters {
-        extendedChoice(name: 'CHOICE_PARAMETER', // The name of the parameter
-                       type: 'PT_SINGLE_SELECT', // Type of parameter, PT_SINGLE_SELECT for single select dropdown
-                       description: 'Select an option from the list', // Description shown to the user
-                       visibleItemCount: 5, // Number of options visible at once in the dropdown
-                       multiSelectDelimiter: ',', // Delimiter for multiple choice values
+        extendedChoice(name: 'CHECKBOX_PARAMETER', // The name of the parameter
+                       type: 'PT_CHECKBOX', // Type of parameter, PT_CHECKBOX for checkbox
+                       description: 'Select options from the list', // Description shown to the user
                        quoteValue: false, // Whether to quote the values
-                       saveJSONParameterToFile: false, // Save the JSON representation of the parameter to a file
                        groovyScript: [
                            classpath: [], // Additional classpath entries
                            script: '''
@@ -21,8 +18,11 @@ pipeline {
     stages {
         stage('Build') {
             steps {
-                echo "The chosen option is: ${params.CHOICE_PARAMETER}"
-                // Your build steps go here
+                script {
+                    def selectedOptions = params.CHECKBOX_PARAMETER
+                    echo "Selected options: ${selectedOptions}"
+                    // Your build steps go here
+                }
             }
         }
     }
