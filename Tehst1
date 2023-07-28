@@ -9,9 +9,16 @@ def get_tag_editors_by_resource_type(resource_type):
     # Initialize the Resource Groups Tag Editor client
     tag_editor_client = boto3.client('resourcegroupstaggingapi', region_name=region)
 
-    # Get the resource group tag editors by resource type
-    response = tag_editor_client.get_tag_keys(ResourceTypeFilters=[resource_type])
-    resource_tag_editors = response['TagKeys']
+    # Get resources with tags
+    response = tag_editor_client.get_resources()
+
+    # Extract tag keys for the specified resource type
+    resource_tag_editors = set()
+    for resource in response['ResourceTagMappingList']:
+        if resource['ResourceType'] == resource_type:
+            tags = resource.get('Tags', [])
+            for tag in tags:
+                resource_tag_editors.add(tag['Key'])
 
     # Create a CSV string to store the data
     csv_buffer = StringIO()
@@ -118,4 +125,3 @@ def lambda_handler(event, context):
             'statusCode': 500,
             'body': json.dumps(f'Error sending email: {str(e)}')
         }
-
