@@ -1,5 +1,28 @@
 import boto3
 import json
+import pandas as pd
+from io import BytesIO
+
+def get_resource_group_tag_editors():
+    # Configure your AWS region and resource group name
+    region = 'your_aws_region'
+    resource_group_name = 'your_resource_group_name'
+
+    # Initialize the Resource Groups Tag Editor client
+    tag_editor_client = boto3.client('resourcegroupstaggingapi', region_name=region)
+
+    # Get the resource group tag editors in the specified resource group
+    response = tag_editor_client.get_resource_group_tag_mapping(ResourceGroup=resource_group_name)
+    resource_group_editors = response['ResourceTagMappingList']
+
+    # Convert the resource group tag editors to a DataFrame
+    df = pd.DataFrame(resource_group_editors)
+
+    # Create an Excel file buffer to store the data
+    excel_buffer = BytesIO()
+    df.to_excel(excel_buffer, index=False)
+
+    return excel_buffer
 
 def lambda_handler(event, context):
     # Configure your AWS region and SES client
@@ -36,8 +59,6 @@ def lambda_handler(event, context):
             function_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Lambda::Function'), 'N/A')
             bucket_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::S3::Bucket'), 'N/A')
             service_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Service::Resource'), 'N/A')
-            tags = event_data.get('Tags', [])
-            tag_presence = 'Yes' if tags else 'No'
 
             all_event_details.append({
                 'EventName': event_name,
@@ -47,31 +68,41 @@ def lambda_handler(event, context):
                 'UserName': user_name,
                 'FunctionName': function_name,
                 'BucketName': bucket_name,
-                'ServiceName': service_name,
-                'TagPresence': tag_presence
+                'ServiceName': service_name
             })
 
     # Create a table in HTML format with the event details
-    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th><th>Tag Presence</th></tr>"
+    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th></tr>"
     for event_detail in all_event_details:
-        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityType']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['ARN']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td><td>{event_detail['BucketName']}</td><td>{event_detail['ServiceName']}</td><td>{event_detail['TagPresence']}</td></tr>"
+        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityType']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['ARN']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td><td>{event_detail['BucketName']}</td><td>{event_detail['ServiceName']}</td></tr>"
     table += "</table>"
 
-    # Send email using SES with the table in the email body
+    # Send email using SES with the table and resource group tag editors in the email body
     sender_email = 'your_sender_email'
     recipient_email = 'your_recipient_email'
-    subject = 'CloudTrail Event Report'
+    subject = 'CloudTrail Event Report with Resource Group Tag Editors'
     body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\n\n{table}"
 
     try:
+        excel_buffer = get_resource_group_tag_editors()
+        excel_bytes = excel_buffer.getvalue()
+
         ses_client.send_email(
             Source=sender_email,
             Destination={'ToAddresses': [recipient_email]},
             Message={
                 'Subject': {'Data': subject},
                 'Body': {'Html': {'Data': body}},
-            }
+            },
+            Attachments=[
+                {
+                    'FileName': 'Resource_Group_Tag_Editors.xlsx',
+                    'Data': excel_bytes,
+                    'ContentType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                }
+            ]
         )
+
         return {
             'statusCode': 200,
             'body': json.dumps('Email sent successfully.')
