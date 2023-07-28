@@ -36,6 +36,8 @@ def lambda_handler(event, context):
             function_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Lambda::Function'), 'N/A')
             bucket_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::S3::Bucket'), 'N/A')
             service_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Service::Resource'), 'N/A')
+            tags = event_data.get('Tags', [])
+            tag_presence = 'Yes' if tags else 'No'
 
             all_event_details.append({
                 'EventName': event_name,
@@ -45,13 +47,14 @@ def lambda_handler(event, context):
                 'UserName': user_name,
                 'FunctionName': function_name,
                 'BucketName': bucket_name,
-                'ServiceName': service_name
+                'ServiceName': service_name,
+                'TagPresence': tag_presence
             })
 
     # Create a table in HTML format with the event details
-    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th></tr>"
+    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th><th>Tag Presence</th></tr>"
     for event_detail in all_event_details:
-        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityType']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['ARN']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td><td>{event_detail['BucketName']}</td><td>{event_detail['ServiceName']}</td></tr>"
+        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityType']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['ARN']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td><td>{event_detail['BucketName']}</td><td>{event_detail['ServiceName']}</td><td>{event_detail['TagPresence']}</td></tr>"
     table += "</table>"
 
     # Send email using SES with the table in the email body
