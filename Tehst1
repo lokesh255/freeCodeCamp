@@ -1,85 +1,21 @@
-import boto3
 import json
 
 def lambda_handler(event, context):
-    # Configure your AWS region and SES client
-    region = 'your_aws_region'
-    ses_client = boto3.client('ses', region_name=region)
-
-    # Specify the event names you want to filter for
-    event_names_filter = ['CreateFunction', 'CreateBucket', 'CreateService']
-
-    # Initialize the CloudTrail client
-    cloudtrail_client = boto3.client('cloudtrail', region_name=region)
-
-    # Use the lookup_events API to retrieve the events
-    all_event_details = []
-
-    for event_name_filter in event_names_filter:
-        response = cloudtrail_client.lookup_events(
-            LookupAttributes=[
-                {
-                    'AttributeKey': 'EventName',
-                    'AttributeValue': event_name_filter
-                }
-            ]
-        )
-
-        # Extract required event details and store them in a list of dictionaries
-        for event_data in response['Events']:
-            event_name = event_data['EventName']
-            user_identity = event_data.get('UserIdentity', {})
-            user_identity_type = user_identity.get('Type', 'N/A')
-            principal_id = user_identity.get('PrincipalId', 'N/A')
-            arn = user_identity.get('Arn', 'N/A')
-            session_issuer = user_identity.get('SessionIssuer', {})
-            session_issuer_role_arn = session_issuer.get('Arn', 'N/A')
-            user_name = user_identity.get('UserName', 'N/A')
-            resources = event_data.get('Resources', [])
-            function_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Lambda::Function'), 'N/A')
-            bucket_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::S3::Bucket'), 'N/A')
-            service_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Service::Resource'), 'N/A')
-
-            all_event_details.append({
-                'EventName': event_name,
-                'UserIdentityType': user_identity_type,
-                'PrincipalID': principal_id,
-                'ARN': arn,
-                'SessionIssuerRoleARN': session_issuer_role_arn,
-                'UserName': user_name,
-                'FunctionName': function_name,
-                'BucketName': bucket_name,
-                'ServiceName': service_name
-            })
-
-    # Create a table in HTML format with the event details
-    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>Session Issuer Role ARN</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th></tr>"
-    for event_detail in all_event_details:
-        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityType']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['ARN']}</td><td>{event_detail['SessionIssuerRoleARN']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td><td>{event_detail['BucketName']}</td><td>{event_detail['ServiceName']}</td></tr>"
-    table += "</table>"
-
-    # Send email using SES with the table in the email body
-    sender_email = 'your_sender_email'
-    recipient_email = 'your_recipient_email'
-    subject = 'CloudTrail Event Report'
-    body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\n\n{table}"
-
-    try:
-        ses_client.send_email(
-            Source=sender_email,
-            Destination={'ToAddresses': [recipient_email]},
-            Message={
-                'Subject': {'Data': subject},
-                'Body': {'Html': {'Data': body}},
-            }
-        )
-
-        return {
-            'statusCode': 200,
-            'body': json.dumps('Email sent successfully.')
-        }
-    except Exception as e:
-        return {
-            'statusCode': 500,
-            'body': json.dumps(f'Error sending email: {str(e)}')
-        }
+    # Parse the event data from JSON format using json.loads
+    event_data = json.loads(event)
+    
+    # Access the user identity dictionary from the event
+    user_identity = event_data.get('userIdentity', {})
+    
+    # Access the session context dictionary from the user identity
+    session_context = user_identity.get('sessionContext', {})
+    
+    # Access the sessionIssuer dictionary from the session context
+    session_issuer = session_context.get('sessionIssuer', {})
+    
+    # Now, you can access the sessionIssuer ARN and other details
+    session_issuer_arn = session_issuer.get('arn', 'N/A')
+    session_issuer_user_name = session_issuer.get('userName', 'N/A')
+    # ... (other sessionIssuer attributes)
+    
+    # The rest of your Lambda function code here
