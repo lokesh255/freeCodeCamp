@@ -17,70 +17,60 @@ def lambda_handler(event, context):
     region = 'your_aws_region'
     ses_client = boto3.client('ses', region_name=region)
 
-    # Specify the event names you want to filter for
-    event_names_filter = ['CreateFunction', 'CreateBucket', 'CreateService']
+    # Specify the event name you want to filter for
+    event_name_filter = 'CreateFunction'
 
-    # Initialize the CloudTrail and IAM clients
+    # Initialize the CloudTrail client
     cloudtrail_client = boto3.client('cloudtrail', region_name=region)
 
     # Use the lookup_events API to retrieve the events
     all_event_details = []
 
-    for event_name_filter in event_names_filter:
-        response = cloudtrail_client.lookup_events(
-            LookupAttributes=[
-                {
-                    'AttributeKey': 'EventName',
-                    'AttributeValue': event_name_filter
-                }
-            ]
-        )
+    response = cloudtrail_client.lookup_events(
+        LookupAttributes=[
+            {
+                'AttributeKey': 'EventName',
+                'AttributeValue': event_name_filter
+            }
+        ]
+    )
 
-        # Extract required event details and store them in a list of dictionaries
-        for event_data in response['Events']:
-            user_identity = event_data.get('userIdentity', {})
-            session_context = user_identity.get('sessionContext', {})
-            session_issuer = session_context.get('sessionIssuer', {})
-            session_issuer_arn = session_issuer.get('arn', 'N/A')
-            user_name = user_identity.get('userName', 'N/A')
+    # Extract required event details and store them in a list of dictionaries
+    for event_data in response['Events']:
+        user_identity = event_data.get('userIdentity', {})
+        session_context = user_identity.get('sessionContext', {})
+        session_issuer = session_context.get('sessionIssuer', {})
+        session_issuer_arn = session_issuer.get('arn', 'N/A')
+        user_name = user_identity.get('userName', 'N/A')
 
-            resources = event_data.get('Resources', [])
-            function_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Lambda::Function'), 'N/A')
-            bucket_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::S3::Bucket'), 'N/A')
-            service_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Service::Resource'), 'N/A')
+        response_elements = event_data.get('responseElements', {})
+        function_arn = response_elements.get('functionArn', 'N/A')
+        role_name = response_elements.get('role', 'N/A')
 
-            # Fetch IAM role name associated with the function
-            function_arn = next((resource['ARN'] for resource in resources if resource['ResourceType'] == 'AWS::Lambda::Function'), None)
-            iam_role_name = 'N/A'
-            if function_arn:
-                iam_role_name = function_arn.split('/')[-1]
+        # Check if the IAM role has tags
+        tags = get_tags_for_role(role_name)
 
-            # Check if the IAM role has tags
-            tags = get_tags_for_role(iam_role_name)
-
-            all_event_details.append({
-                'EventName': event_name_filter,
-                'UserName': user_name,
-                'FunctionName': function_name,
-                'BucketName': bucket_name,
-                'ServiceName': service_name,
-                'SessionIssuerARN': session_issuer_arn,
-                'IAMRoleName': iam_role_name,
-                'IAMRoleTags': tags
-            })
+        all_event_details.append({
+            'EventName': event_name_filter,
+            'UserName': user_name,
+            'FunctionARN': function_arn,
+            'IAMRoleName': role_name,
+            'SessionIssuerARN': session_issuer_arn,
+            'IAMRoleTags': tags
+        })
 
     # Create a table in HTML format with the event details
-    table = "<table border='1'><tr><th>Event Name</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th><th>Session Issuer ARN</th><th>IAM Role Name</th><th>IAM Role Tags</th></tr>"
+    table = "<table border='1'><tr><th>Event Name</th><th>User Name</th><th>Function ARN</th><th>IAM Role Name</th><th>Session Issuer ARN</th><th>IAM Role Tags</th></tr>"
     for event_detail in all_event_details:
         tags_str = ', '.join([f"{k}: {v}" for k, v in event_detail['IAMRoleTags'].items()])
-        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td><td>{event_detail['BucketName']}</td><td>{event_detail['ServiceName']}</td><td>{event_detail['SessionIssuerARN']}</td><td>{event_detail['IAMRoleName']}</td><td>{tags_str}</td></tr>"
+        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionARN']}</td><td>{event_detail['IAMRoleName']}</td><td>{event_detail['SessionIssuerARN']}</td><td>{tags_str}</td></tr>"
     table += "</table>"
 
     # Send email using SES with the table in the email body
     sender_email = 'your_sender_email'
     recipient_email = 'your_recipient_email'
-    subject = 'CloudTrail Event Report'
-    body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\n\n{table}"
+    subject = 'CloudTrail Event Report - Create Function'
+    body = f"CloudTrail events with EventName: {event_name_filter}\n\n{table}"
 
     try:
         ses_client.send_email(
