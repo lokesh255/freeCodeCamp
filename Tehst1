@@ -28,6 +28,8 @@ def lambda_handler(event, context):
 
     # Use the lookup_events API to retrieve the events
     all_event_details = []
+    all_iam_roles = set()
+
     for event_name_filter in event_names_filter:
         response = cloudtrail_client.lookup_events(
             LookupAttributes=[
@@ -51,9 +53,6 @@ def lambda_handler(event, context):
             bucket_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::S3::Bucket'), 'N/A')
             service_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Service::Resource'), 'N/A')
 
-            # Check if the custom role has tags
-            tags = get_tags_for_role(arn)
-
             all_event_details.append({
                 'EventName': event_name,
                 'UserIdentityType': user_identity_type,
@@ -62,9 +61,20 @@ def lambda_handler(event, context):
                 'UserName': user_name,
                 'FunctionName': function_name,
                 'BucketName': bucket_name,
-                'ServiceName': service_name,
-                'HasTags': 'Yes' if tags else 'No'
+                'ServiceName': service_name
             })
+
+            # Check if the event has an IAM role
+            if 'iam.amazonaws.com' in principal_id:
+                all_iam_roles.add(arn)
+
+    # Check if IAM roles have tags and update the details accordingly
+    for event_detail in all_event_details:
+        if event_detail['ARN'] in all_iam_roles:
+            tags = get_tags_for_role(event_detail['ARN'])
+            event_detail['HasTags'] = 'Yes' if tags else 'No'
+        else:
+            event_detail['HasTags'] = 'N/A'
 
     # Create a table in HTML format with the event details
     table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th><th>Has Tags</th></tr>"
@@ -76,24 +86,4 @@ def lambda_handler(event, context):
     sender_email = 'your_sender_email'
     recipient_email = 'your_recipient_email'
     subject = 'CloudTrail Event Report with Tag Information'
-    body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\n\n{table}"
-
-    try:
-        ses_client.send_email(
-            Source=sender_email,
-            Destination={'ToAddresses': [recipient_email]},
-            Message={
-                'Subject': {'Data': subject},
-                'Body': {'Html': {'Data': body}},
-            }
-        )
-
-        return {
-            'statusCode': 200,
-            'body': json.dumps('Email sent successfully.')
-        }
-    except Exception as e:
-        return {
-            'statusCode': 500,
-            'body': json.dumps(f'Error sending email: {str(e)}')
-        }
+    body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\
