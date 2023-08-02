@@ -86,4 +86,24 @@ def lambda_handler(event, context):
     sender_email = 'your_sender_email'
     recipient_email = 'your_recipient_email'
     subject = 'CloudTrail Event Report with Tag Information'
-    body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\
+    body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\n\n{table}"
+
+    try:
+        ses_client.send_email(
+            Source=sender_email,
+            Destination={'ToAddresses': [recipient_email]},
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Html': {'Data': body}},
+            }
+        )
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Email sent successfully.')
+        }
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': json.dumps(f'Error sending email: {str(e)}')
+        }
