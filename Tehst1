@@ -1,20 +1,6 @@
 import boto3
 import json
 
-def get_tags_for_role(role_arn):
-    # Configure your AWS region
-    region = 'your_aws_region'
-
-    # Initialize the IAM client
-    iam_client = boto3.client('iam', region_name=region)
-
-    # Get the tags for the specified IAM role
-    response = iam_client.list_role_tags(RoleName=role_arn.split('/')[-1])
-
-    # Extract the tags (if available)
-    tags = response.get('Tags', [])
-    return tags
-
 def lambda_handler(event, context):
     # Configure your AWS region and SES client
     region = 'your_aws_region'
@@ -28,7 +14,6 @@ def lambda_handler(event, context):
 
     # Use the lookup_events API to retrieve the events
     all_event_details = []
-    all_iam_roles = set()
 
     for event_name_filter in event_names_filter:
         response = cloudtrail_client.lookup_events(
@@ -47,6 +32,8 @@ def lambda_handler(event, context):
             user_identity_type = user_identity.get('Type', 'N/A')
             principal_id = user_identity.get('PrincipalId', 'N/A')
             arn = user_identity.get('Arn', 'N/A')
+            session_issuer = user_identity.get('SessionIssuer', {})
+            session_issuer_role_arn = session_issuer.get('Arn', 'N/A')
             user_name = user_identity.get('UserName', 'N/A')
             resources = event_data.get('Resources', [])
             function_name = next((resource['ResourceName'] for resource in resources if resource['ResourceType'] == 'AWS::Lambda::Function'), 'N/A')
@@ -58,34 +45,23 @@ def lambda_handler(event, context):
                 'UserIdentityType': user_identity_type,
                 'PrincipalID': principal_id,
                 'ARN': arn,
+                'SessionIssuerRoleARN': session_issuer_role_arn,
                 'UserName': user_name,
                 'FunctionName': function_name,
                 'BucketName': bucket_name,
                 'ServiceName': service_name
             })
 
-            # Check if the event has an IAM role
-            if 'iam.amazonaws.com' in principal_id:
-                all_iam_roles.add(arn)
-
-    # Check if IAM roles have tags and update the details accordingly
-    for event_detail in all_event_details:
-        if event_detail['ARN'] in all_iam_roles:
-            tags = get_tags_for_role(event_detail['ARN'])
-            event_detail['HasTags'] = 'Yes' if tags else 'No'
-        else:
-            event_detail['HasTags'] = 'N/A'
-
     # Create a table in HTML format with the event details
-    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th><th>Has Tags</th></tr>"
+    table = "<table border='1'><tr><th>Event Name</th><th>User Identity Type</th><th>PrincipalID</th><th>ARN</th><th>Session Issuer Role ARN</th><th>User Name</th><th>Function Name</th><th>Bucket Name</th><th>Service Name</th></tr>"
     for event_detail in all_event_details:
-        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityType']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['ARN']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td><td>{event_detail['BucketName']}</td><td>{event_detail['ServiceName']}</td><td>{event_detail['HasTags']}</td></tr>"
+        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserIdentityType']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['ARN']}</td><td>{event_detail['SessionIssuerRoleARN']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionName']}</td><td>{event_detail['BucketName']}</td><td>{event_detail['ServiceName']}</td></tr>"
     table += "</table>"
 
     # Send email using SES with the table in the email body
     sender_email = 'your_sender_email'
     recipient_email = 'your_recipient_email'
-    subject = 'CloudTrail Event Report with Tag Information'
+    subject = 'CloudTrail Event Report'
     body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\n\n{table}"
 
     try:
