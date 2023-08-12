@@ -1,15 +1,19 @@
 import boto3
 import json
 
-def get_tags_for_role(role_arn):
-    # Function to get tags for IAM role using IAM client
-    iam_client = boto3.client('iam')
+def get_tags(entity_arn):
+    # Function to get tags for an IAM user or role
+    if entity_arn.startswith('arn:aws:iam::'):
+        client = boto3.client('iam')
+    else:
+        client = boto3.client('sts')
+
     try:
-        response = iam_client.list_role_tags(RoleName=role_arn)
+        response = client.list_tags_for_resource(ResourceName=entity_arn)
         tags = {tag['Key']: tag['Value'] for tag in response['Tags']}
         return tags
     except Exception as e:
-        print(f"Error getting tags for IAM role {role_arn}: {str(e)}")
+        print(f"Error getting tags for {entity_arn}: {str(e)}")
         return {}
 
 def lambda_handler(event, context):
@@ -48,12 +52,11 @@ def lambda_handler(event, context):
             function_arn = response_elements.get('functionArn', 'N/A')
             role_name = response_elements.get('role', 'N/A')
 
-            # Check if the session issuer IAM role has tags and count them
-            session_issuer_tags = get_tags_for_role(session_issuer_arn)
+            # Get tags for session issuer and IAM role
+            session_issuer_tags = get_tags(session_issuer_arn)
             session_issuer_tags_count = len(session_issuer_tags)
 
-            # Check if the IAM role has tags and count them
-            iam_role_tags = get_tags_for_role(role_name)
+            iam_role_tags = get_tags(role_name)
             iam_role_tags_count = len(iam_role_tags)
 
             all_event_details.append({
