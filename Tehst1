@@ -48,10 +48,13 @@ def lambda_handler(event, context):
             function_arn = response_elements.get('functionArn', 'N/A')
             role_name = response_elements.get('role', 'N/A')
 
-            # Check if the session issuer IAM role has tags
+            # Check if the session issuer IAM role has tags and count them
             session_issuer_tags = get_tags_for_role(session_issuer_arn)
-            # Check if the IAM role has tags
+            session_issuer_tags_count = len(session_issuer_tags)
+
+            # Check if the IAM role has tags and count them
             iam_role_tags = get_tags_for_role(role_name)
+            iam_role_tags_count = len(iam_role_tags)
 
             all_event_details.append({
                 'EventName': event_name_filter,
@@ -59,16 +62,14 @@ def lambda_handler(event, context):
                 'FunctionARN': function_arn,
                 'IAMRoleName': role_name,
                 'SessionIssuerARN': session_issuer_arn,
-                'SessionIssuerTags': session_issuer_tags,
-                'IAMRoleTags': iam_role_tags
+                'SessionIssuerTagsCount': session_issuer_tags_count,
+                'IAMRoleTagsCount': iam_role_tags_count
             })
 
     # Create a table in HTML format with the event details
-    table = "<table border='1'><tr><th>Event Name</th><th>User Name</th><th>Function ARN</th><th>IAM Role Name</th><th>Session Issuer ARN</th><th>Session Issuer Tags</th><th>IAM Role Tags</th></tr>"
+    table = "<table border='1'><tr><th>Event Name</th><th>User Name</th><th>Function ARN</th><th>IAM Role Name</th><th>Session Issuer ARN</th><th>Session Issuer Tags Count</th><th>IAM Role Tags Count</th></tr>"
     for event_detail in all_event_details:
-        session_tags_str = ', '.join([f"{k}: {v}" for k, v in event_detail['SessionIssuerTags'].items()])
-        iam_tags_str = ', '.join([f"{k}: {v}" for k, v in event_detail['IAMRoleTags'].items()])
-        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionARN']}</td><td>{event_detail['IAMRoleName']}</td><td>{event_detail['SessionIssuerARN']}</td><td>{session_tags_str}</td><td>{iam_tags_str}</td></tr>"
+        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionARN']}</td><td>{event_detail['IAMRoleName']}</td><td>{event_detail['SessionIssuerARN']}</td><td>{event_detail['SessionIssuerTagsCount']}</td><td>{event_detail['IAMRoleTagsCount']}</td></tr>"
     table += "</table>"
 
     # Send email using SES with the table in the email body
@@ -96,4 +97,3 @@ def lambda_handler(event, context):
             'statusCode': 500,
             'body': json.dumps(f'Error sending email: {str(e)}')
         }
-
