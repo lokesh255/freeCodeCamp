@@ -1,1 +1,99 @@
-Need a lambda python code that should get the Event record from the event history for every create function event name it should fetch only the user identity type, principleID, arn, session issuer role arn, user name using json. loads and function name, and it  should enter into response elements and fetch the functionsArn,  role name and also need to check whether that IAM roles have tag or not and it should generate in table format and that table need to send in mail using ses
+import boto3
+import json
+
+def get_tags_for_role(role_arn):
+    # Function to get tags for IAM role using IAM client
+    iam_client = boto3.client('iam')
+    try:
+        response = iam_client.list_role_tags(RoleName=role_arn)
+        tags = {tag['Key']: tag['Value'] for tag in response['Tags']}
+        return tags
+    except Exception as e:
+        print(f"Error getting tags for IAM role {role_arn}: {str(e)}")
+        return {}
+
+def lambda_handler(event, context):
+    # Configure your AWS region and SES client
+    region = 'your_aws_region'
+    ses_client = boto3.client('ses', region_name=region)
+
+    # Specify the event names you want to filter for
+    event_names_filter = ['CreateFunction', 'CreateBucket', 'CreateService']
+
+    # Initialize the CloudTrail client
+    cloudtrail_client = boto3.client('cloudtrail', region_name=region)
+
+    # Use the lookup_events API to retrieve the events
+    all_event_details = []
+
+    for event_name_filter in event_names_filter:
+        response = cloudtrail_client.lookup_events(
+            LookupAttributes=[
+                {
+                    'AttributeKey': 'EventName',
+                    'AttributeValue': event_name_filter
+                }
+            ]
+        )
+
+        # Extract required event details and store them in a list of dictionaries
+        for event_data in response['Events']:
+            user_identity = event_data.get('userIdentity', {})
+            session_context = user_identity.get('sessionContext', {})
+            session_issuer = session_context.get('sessionIssuer', {})
+            session_issuer_arn = session_issuer.get('arn', 'N/A')
+            user_name = user_identity.get('userName', 'N/A')
+
+            response_elements = event_data.get('responseElements', {})
+            function_arn = response_elements.get('functionArn', 'N/A')
+            role_name = response_elements.get('role', 'N/A')
+
+            # Check if the session issuer IAM role has tags
+            session_issuer_tags = get_tags_for_role(session_issuer_arn)
+            # Check if the IAM role has tags
+            iam_role_tags = get_tags_for_role(role_name)
+
+            all_event_details.append({
+                'EventName': event_name_filter,
+                'UserName': user_name,
+                'FunctionARN': function_arn,
+                'IAMRoleName': role_name,
+                'SessionIssuerARN': session_issuer_arn,
+                'SessionIssuerTags': session_issuer_tags,
+                'IAMRoleTags': iam_role_tags
+            })
+
+    # Create a table in HTML format with the event details
+    table = "<table border='1'><tr><th>Event Name</th><th>User Name</th><th>Function ARN</th><th>IAM Role Name</th><th>Session Issuer ARN</th><th>Session Issuer Tags</th><th>IAM Role Tags</th></tr>"
+    for event_detail in all_event_details:
+        session_tags_str = ', '.join([f"{k}: {v}" for k, v in event_detail['SessionIssuerTags'].items()])
+        iam_tags_str = ', '.join([f"{k}: {v}" for k, v in event_detail['IAMRoleTags'].items()])
+        table += f"<tr><td>{event_detail['EventName']}</td><td>{event_detail['UserName']}</td><td>{event_detail['FunctionARN']}</td><td>{event_detail['IAMRoleName']}</td><td>{event_detail['SessionIssuerARN']}</td><td>{session_tags_str}</td><td>{iam_tags_str}</td></tr>"
+    table += "</table>"
+
+    # Send email using SES with the table in the email body
+    sender_email = 'your_sender_email'
+    recipient_email = 'your_recipient_email'
+    subject = 'CloudTrail Event Report'
+    body = f"CloudTrail events with EventNames: {', '.join(event_names_filter)}\n\n{table}"
+
+    try:
+        ses_client.send_email(
+            Source=sender_email,
+            Destination={'ToAddresses': [recipient_email]},
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Html': {'Data': body}},
+            }
+        )
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Email sent successfully.')
+        }
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': json.dumps(f'Error sending email: {str(e)}')
+        }
+
