@@ -1,1 +1,36 @@
-Need a lambda python code that should get the Event record from the event history for every createfunction ,create bucket event name it should fetch the resources name, resource type from detail and also it should fetch only the user identity type, principleID, arn, session issuer user name and also it should check that session issuer user name and function name, bucket name, service name and it should generate in table format and bucket name, function name ahould be in same row called as resource name and that table need to send in mail using ses
+import boto3
+import json
+
+def update_kms_policy(role_arn, kms_key_id):
+    kms_client = boto3.client('kms')
+    
+    policy = kms_client.get_key_policy(
+        KeyId=kms_key_id,
+        PolicyName='default'
+    )['Policy']
+
+    updated_policy = add_role_to_policy(policy, role_arn)
+    
+    kms_client.put_key_policy(
+        KeyId=kms_key_id,
+        PolicyName='default',
+        Policy=updated_policy
+    )
+
+def add_role_to_policy(policy, role_arn):
+    policy_json = json.loads(policy)
+    # Modify the policy JSON to add the role ARN to relevant sections
+    # For example, you might modify the "Statement" section.
+    updated_policy = json.dumps(policy_json)
+    return updated_policy
+
+def lambda_handler(event, context):
+    new_role_arn = event['detail']['responseElements']['role']['arn']
+    kms_key_id = 'your-kms-key-id'
+
+    update_kms_policy(new_role_arn, kms_key_id)
+
+    return {
+        'statusCode': 200,
+        'body': 'KMS policy updated successfully'
+    }
