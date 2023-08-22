@@ -1,1 +1,95 @@
-Need a lambda python code that should get the Event record from the event history for every create event name it should fetch only the user identity type, principleID, arn, session issuer user name and also it should check that session issuer user name have tag or not  if yes then it should show what are tags are available what is the key , user name using json. loads and function name, bucket name, service name and it  should fetch those functions IAM role name and also need to che ch whether that IAM roles have tag or not and it should generate in table format and that table need to send in mail using ses
+import boto3
+import json
+
+def get_tags(entity_arn):
+    # Function to get tags for an IAM user, role, or other resource
+    client = boto3.client('sts')
+    try:
+        response = client.list_tags_for_resource(ResourceName=entity_arn)
+        tags = response['Tags']
+        return tags
+    except Exception as e:
+        print(f"Error getting tags for {entity_arn}: {str(e)}")
+        return []
+
+def lambda_handler(event, context):
+    # Configure your AWS region and SES client
+    region = 'your_aws_region'
+    ses_client = boto3.client('ses', region_name=region)
+
+    # Initialize the CloudTrail client
+    cloudtrail_client = boto3.client('cloudtrail', region_name=region)
+
+    # Define event types
+    event_types = ['CreateFunction', 'CreateBucket', 'CreateService']
+
+    all_event_details = []
+
+    # Retrieve events for each event type
+    for event_type in event_types:
+        response = cloudtrail_client.lookup_events(
+            LookupAttributes=[
+                {
+                    'AttributeKey': 'EventName',
+                    'AttributeValue': event_type
+                }
+            ]
+        )
+
+        for event_data in response['Events']:
+            user_identity = event_data.get('userIdentity', {})
+            session_context = user_identity.get('sessionContext', {})
+            session_issuer = session_context.get('sessionIssuer', {})
+            session_issuer_user_name = session_issuer.get('userName', 'N/A')
+            user_name = user_identity.get('userName', 'N/A')
+            arn = user_identity.get('arn', 'N/A')
+            principal_id = user_identity.get('principalId', 'N/A')
+
+            session_issuer_tags = get_tags(session_issuer['arn'])
+            iam_role_tags = get_tags(arn)
+
+            session_issuer_tags_info = ", ".join([f"{tag['Key']}: {tag['Value']}" for tag in session_issuer_tags])
+
+            all_event_details.append({
+                'UserName': user_name,
+                'ARN': arn,
+                'PrincipalID': principal_id,
+                'SessionIssuerUserName': session_issuer_user_name,
+                'SessionIssuerTags': session_issuer_tags_info,
+                'IAMRoleTags': iam_role_tags,
+                'EventType': event_type
+            })
+
+    # Create a table in HTML format with the event details
+    table = "<table border='1'><tr><th>User Name</th><th>ARN</th><th>Principal ID</th><th>Session Issuer User Name</th><th>Session Issuer Tags</th><th>IAM Role Tags</th><th>Event Type</th></tr>"
+    for event_detail in all_event_details:
+        iam_role_tags_string = ', '.join([f"{tag['Key']}: {tag['Value']}" for tag in event_detail['IAMRoleTags']])
+        table += f"<tr><td>{event_detail['UserName']}</td><td>{event_detail['ARN']}</td><td>{event_detail['PrincipalID']}</td><td>{event_detail['SessionIssuerUserName']}</td><td>{event_detail['SessionIssuerTags']}</td><td>{iam_role_tags_string}</td><td>{event_detail['EventType']}</td></tr>"
+    table += "</table>"
+
+    # Send email using SES with the table in the email body
+    sender_email = 'your_sender_email'
+    recipient_email = 'your_recipient_email'
+    subject = 'CloudTrail Event Report'
+
+    body = f"CloudTrail Event Report\n\n{table}"
+
+    try:
+        ses_client.send_email(
+            Source=sender_email,
+            Destination={'ToAddresses': [recipient_email]},
+            Message={
+                'Subject': {'Data': subject},
+                'Body': {'Html': {'Data': body}},
+            }
+        )
+
+        return {
+            'statusCode': 200,
+            'body': json.dumps('Email sent successfully.')
+        }
+    except Exception as e:
+        return {
+            'statusCode': 500,
+            'body': json.dumps(f'Error sending email: {str(e)}')
+        }
