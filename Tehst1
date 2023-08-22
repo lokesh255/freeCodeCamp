@@ -1,19 +1,34 @@
 import boto3
+import json
 
 def lambda_handler(event, context):
-    role_arn = event['detail']['responseElements']['role']['arn']
-    kms_key_id = 'your-kms-key-id'
-    
-    kms_client = boto3.client('kms')
-    
-    # Create a grant for the IAM role on the KMS key
-    kms_client.create_grant(
-        KeyId=kms_key_id,
-        GranteePrincipal=role_arn,
-        Operations=['Decrypt']
-    )
+    for record in event['Records']:
+        try:
+            detail = json.loads(record['body'])['detail']
+            event_name = detail['eventName']
+            
+            if event_name == 'CreateRole':
+                role_arn = detail['responseElements']['role']['arn']
+                kms_key_id = 'your-kms-key-id'
+                
+                kms_client = boto3.client('kms')
+                
+                # Create a grant for the IAM role on the KMS key
+                kms_client.create_grant(
+                    KeyId=kms_key_id,
+                    GranteePrincipal=role_arn,
+                    Operations=['Decrypt']
+                )
+                
+                return {
+                    'statusCode': 200,
+                    'body': 'KMS key policy updated successfully'
+                }
+        except KeyError:
+            # This means the event is not a CreateRole event or doesn't contain expected keys
+            pass
     
     return {
         'statusCode': 200,
-        'body': 'KMS key policy updated successfully'
+        'body': 'No relevant events found'
     }
