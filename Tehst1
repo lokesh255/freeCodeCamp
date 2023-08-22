@@ -1,35 +1,31 @@
 import boto3
+import json
 
-def update_kms_policy(kms_key_id, role_arn):
+def update_kms_policy(kms_key_id, new_role_arn):
     kms_client = boto3.client('kms')
     
-    # Get the current KMS key policy
-    key_policy = kms_client.get_key_policy(
+    policy = kms_client.get_key_policy(
         KeyId=kms_key_id,
         PolicyName='default'
     )['Policy']
     
-    # Modify the key policy JSON to add the role ARN
-    # Be careful with the structure of the KMS policy JSON
-    updated_policy = modify_policy_with_role(key_policy, role_arn)
+    policy_json = json.loads(policy)
+    # Modify policy_json to add the new_role_arn to relevant sections
     
-    # Update the KMS key policy
+    updated_policy = json.dumps(policy_json)
+    
     kms_client.put_key_policy(
         KeyId=kms_key_id,
         PolicyName='default',
         Policy=updated_policy
     )
 
-def modify_policy_with_role(policy, role_arn):
-    # Parse the policy JSON, add the role ARN to the relevant section
-    # Modify the policy JSON as needed
-    return modified_policy
-
 def lambda_handler(event, context):
-    kms_key_id = 'your-kms-key-id'
-    role_arn = 'arn:aws:iam::123456789012:role/NewRoleName'
-    
-    update_kms_policy(kms_key_id, role_arn)
+    for record in event['Records']:
+        new_role_arn = record['detail']['responseElements']['role']['arn']
+        kms_key_id = 'your-kms-key-id'
+        
+        update_kms_policy(kms_key_id, new_role_arn)
     
     return {
         'statusCode': 200,
