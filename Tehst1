@@ -1,43 +1,19 @@
 import boto3
-import json
-
-def update_kms_policy(role_arn, kms_key_id):
-    kms_client = boto3.client('kms')
-    
-    policy = kms_client.get_key_policy(
-        KeyId=kms_key_id,
-        PolicyName='default'
-    )['Policy']
-    
-    policy_json = json.loads(policy)
-    
-    # Add the role ARN to the KMS key policy
-    statement = {
-        "Sid": "AllowRole",
-        "Effect": "Allow",
-        "Principal": {"AWS": role_arn},
-        "Action": "kms:Decrypt",
-        "Resource": "*"
-    }
-    
-    policy_json['Statement'].append(statement)
-    
-    updated_policy = json.dumps(policy_json)
-    
-    kms_client.put_key_policy(
-        KeyId=kms_key_id,
-        PolicyName='default',
-        Policy=updated_policy
-    )
 
 def lambda_handler(event, context):
-    for record in event['Records']:
-        if record['eventName'] == 'CreateRole':
-            role_arn = record['responseElements']['role']['arn']
-            kms_key_id = 'your-kms-key-id'
-            update_kms_policy(role_arn, kms_key_id)
+    role_arn = event['detail']['responseElements']['role']['arn']
+    kms_key_id = 'your-kms-key-id'
+    
+    kms_client = boto3.client('kms')
+    
+    # Create a grant for the IAM role on the KMS key
+    kms_client.create_grant(
+        KeyId=kms_key_id,
+        GranteePrincipal=role_arn,
+        Operations=['Decrypt']
+    )
     
     return {
         'statusCode': 200,
-        'body': 'KMS policy updated successfully'
+        'body': 'KMS key policy updated successfully'
     }
