@@ -11,6 +11,7 @@ def update_kms_policy(kms_key_id, new_role_arn):
     
     policy_json = json.loads(policy)
     # Modify policy_json to add the new_role_arn to relevant sections
+    # For example, modify the 'Statement' section
     
     updated_policy = json.dumps(policy_json)
     
@@ -21,9 +22,9 @@ def update_kms_policy(kms_key_id, new_role_arn):
     )
 
 def lambda_handler(event, context):
-    for detail in event['detail']['resources']:
-        if detail['resourceType'] == 'AWS::IAM::Role':
-            new_role_arn = detail['ARN']
+    for record in event['resources']:
+        if record['resourceType'] == 'AWS::IAM::Role':
+            new_role_arn = record['ARN']
             kms_key_id = 'your-kms-key-id'
             
             update_kms_policy(kms_key_id, new_role_arn)
