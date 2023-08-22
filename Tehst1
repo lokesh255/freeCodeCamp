@@ -8,8 +8,21 @@ def update_kms_policy(role_arn, kms_key_id):
         KeyId=kms_key_id,
         PolicyName='default'
     )['Policy']
-
-    updated_policy = add_role_to_policy(policy, role_arn)
+    
+    policy_json = json.loads(policy)
+    
+    # Add the role ARN to the KMS key policy
+    statement = {
+        "Sid": "AllowRole",
+        "Effect": "Allow",
+        "Principal": {"AWS": role_arn},
+        "Action": "kms:Decrypt",
+        "Resource": "*"
+    }
+    
+    policy_json['Statement'].append(statement)
+    
+    updated_policy = json.dumps(policy_json)
     
     kms_client.put_key_policy(
         KeyId=kms_key_id,
@@ -17,19 +30,13 @@ def update_kms_policy(role_arn, kms_key_id):
         Policy=updated_policy
     )
 
-def add_role_to_policy(policy, role_arn):
-    policy_json = json.loads(policy)
-    # Modify the policy JSON to add the role ARN to relevant sections
-    # For example, you might modify the "Statement" section.
-    updated_policy = json.dumps(policy_json)
-    return updated_policy
-
 def lambda_handler(event, context):
-    new_role_arn = event['detail']['responseElements']['role']['arn']
-    kms_key_id = 'your-kms-key-id'
-
-    update_kms_policy(new_role_arn, kms_key_id)
-
+    for record in event['Records']:
+        if record['eventName'] == 'CreateRole':
+            role_arn = record['responseElements']['role']['arn']
+            kms_key_id = 'your-kms-key-id'
+            update_kms_policy(role_arn, kms_key_id)
+    
     return {
         'statusCode': 200,
         'body': 'KMS policy updated successfully'
