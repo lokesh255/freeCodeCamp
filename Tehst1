@@ -21,11 +21,12 @@ def update_kms_policy(kms_key_id, new_role_arn):
     )
 
 def lambda_handler(event, context):
-    for record in event['Records']:
-        new_role_arn = record['detail']['responseElements']['role']['arn']
-        kms_key_id = 'your-kms-key-id'
-        
-        update_kms_policy(kms_key_id, new_role_arn)
+    for detail in event['detail']['resources']:
+        if detail['resourceType'] == 'AWS::IAM::Role':
+            new_role_arn = detail['ARN']
+            kms_key_id = 'your-kms-key-id'
+            
+            update_kms_policy(kms_key_id, new_role_arn)
     
     return {
         'statusCode': 200,
