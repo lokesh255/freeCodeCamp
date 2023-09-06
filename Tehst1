@@ -1,33 +1,97 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "AWS CloudFormation Template for S3 Bucket, IAM Role, Lambda, and S3 Bucket Policy",
+  "Parameters": {
+    "SourceBucketName": {
+      "Description": "Name of the source S3 bucket.",
+      "Type": "String"
+    }
+  },
   "Resources": {
-    "CopyS3LambdaFunction": {
+    "MyS3Bucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": { "Ref": "SourceBucketName" }
+      }
+    },
+    "MyLambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "MyLambdaRole",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": { "Service": "lambda.amazonaws.com" },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Policies": [
+          {
+            "PolicyName": "MyLambdaPolicy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["s3:GetObject", "s3:PutObject"],
+                  "Resource": [
+                    { "Fn::GetAtt": ["MyS3Bucket", "Arn"] },
+                    { "Fn::Sub": "${MyS3Bucket.Arn}/*" }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "MyLambdaFunction": {
       "Type": "AWS::Lambda::Function",
       "Properties": {
+        "FunctionName": "MyLambdaFunction",
         "Code": {
-          "S3Bucket": "your-lambda-code-bucket",
-          "S3Key": "lambda-code.zip"
+          "ZipFile": {
+            "Fn::Join": [
+              "",
+              [
+                "const AWS = require('aws-sdk');\n",
+                "const s3 = new AWS.S3();\n",
+                "exports.handler = async (event, context) => {\n",
+                "  const params = {\n",
+                "    Bucket: { \"Ref\": \"SourceBucketName\" },\n",
+                "    CopySource: `/${SourceBucketName}/object-key`,\n",
+                "    Key: 'destination-object-key'\n",
+                "  };\n",
+                "  await s3.copyObject(params).promise();\n",
+                "};\n"
+              ]
+            ]
+          }
         },
         "Handler": "index.handler",
-        "Role": "arn:aws:iam::account-A-ID:role/lambda-role",
+        "Role": { "Fn::GetAtt": ["MyLambdaRole", "Arn"] },
         "Runtime": "nodejs14.x"
       }
     },
-    "CopyS3Permission": {
-      "Type": "AWS::Lambda::Permission",
+    "MyBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
       "Properties": {
-        "Action": "lambda:InvokeFunction",
-        "FunctionName": { "Fn::GetAtt": ["CopyS3LambdaFunction", "Arn"] },
-        "Principal": "s3.amazonaws.com",
-        "SourceAccount": "account-A-ID",
-        "SourceArn": "arn:aws:s3:::source-bucket"
+        "Bucket": { "Ref": "MyS3Bucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": "s3:GetObject",
+              "Resource": { "Fn::Sub": "arn:aws:s3:::${SourceBucketName}/*" }
+            }
+          ]
+        }
       }
-    }
-  },
-  "Outputs": {
-    "LambdaFunctionArn": {
-      "Description": "ARN of the Lambda function",
-      "Value": { "Fn::GetAtt": ["CopyS3LambdaFunction", "Arn"] }
     }
   }
 }
